@@ -64,3 +64,31 @@ def alias(args, stdin=None):
 
 aliases["alias"] = alias
 builtins.__xonsh__.env["THREAD_SUBPROCS"] = False
+
+
+def _unset(args):
+    if not args:
+        print(f'Usage: unset <ENV_VARIABLE> [...]', file=sys.stderr)
+    
+    for v in args:
+        try:
+            __xonsh__.env.pop(v)
+        except:
+            print(f'{v} not found', file=sys.stderr)
+
+aliases['unset'] = _unset
+    
+
+
+def _export(args):
+    if not args:
+        print(f'Usage: export <ENV_VARIABLE=VALUE> [...]', file=sys.stderr)
+    
+    for eq in args:
+        if "=" in eq:
+            name, val = shlex.split(eq)[0].split("=", 1)
+            __xonsh__.env[name] = val
+        else:
+            print(f'{eq} equal sign not found', file=sys.stderr)
+
+aliases['export'] = _export
