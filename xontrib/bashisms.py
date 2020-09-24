@@ -64,3 +64,16 @@ def alias(args, stdin=None):
 
 aliases["alias"] = alias
 builtins.__xonsh__.env["THREAD_SUBPROCS"] = False
+
+
+def _unset(args):
+    if not args:
+        print(f'Usage: unset <ENV_VARIABLE> [<ENV_VARIABLE> ...]', file=sys.stderr)
+    
+    for v in args:
+        try:
+            __xonsh__.env.pop(v)
+        except:
+            print(f'{v} not found', file=sys.stderr)
+
+aliases['unset'] = _unset
