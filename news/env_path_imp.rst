@@ -16,7 +16,7 @@
 
 **Fixed:**
 
-* Fixed type registration for ``*DIRS`` environment variables.
+* Fixed type registration of ``*DIRS`` environment variables.
 
 **Security:**
 
