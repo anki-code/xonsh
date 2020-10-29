@@ -180,6 +180,14 @@ class CommandPipeline:
         s += "\n)"
         return s
 
+    def __str__(self):
+       self.end()
+       return self.output
+
+    @property
+    def str(self):
+        return str(self)
+
     def __bool__(self):
         return self.returncode == 0
 
@@ -232,13 +240,13 @@ class CommandPipeline:
                     self.end(tee_output=False)
                 elif self.captured == "hiddenobject" and stdout:
                     b = stdout.read()
-                    lines = b.splitlines(keepends=True)
+                    lines = b.splitlines()
                     yield from lines
                     self.end(tee_output=False)
                 elif self.captured == "stdout":
                     b = stdout.read()
                     s = self._decode_uninew(b, universal_newlines=True)
-                    self.lines = s.splitlines(keepends=True)
+                    self.lines = s.splitlines()
             return
         # get the correct stderr
         stderr = proc.stderr
@@ -348,9 +356,9 @@ class CommandPipeline:
                 sys.stdout.flush()
             # do some munging of the line before we return it
             if line.endswith(crnl):
-                line = line[:-2] + nl
-            elif line.endswith(cr):
-                line = line[:-1] + nl
+                line = line[:-2]
+            elif line.endswith(cr) or line.endswith(nl):
+                line = line[:-1]
             line = RE_HIDE_ESCAPE.sub(b"", line)
             line = line.decode(encoding=enc, errors=err)
             # tee it up!
@@ -419,6 +427,7 @@ class CommandPipeline:
             return
         self._end(tee_output=tee_output)
         self._return_terminal()
+        return self
 
     def _end(self, tee_output):
         """Waits for the command to complete and then runs any closing and
@@ -596,10 +605,10 @@ class CommandPipeline:
         """Non-blocking, lazy access to output"""
         if self.ended:
             if self._output is None:
-                self._output = "".join(self.lines)
+                self._output = "\n".join(self.lines)
             return self._output
         else:
-            return "".join(self.lines)
+            return "\n".join(self.lines)
 
     @property
     def out(self):
