@@ -393,6 +393,7 @@ class BaseParser(object):
             "rparen",
             "rbracket",
             "at_lparen",
+            "at_lbrace",
             "atdollar_lparen",
             "indent",
             "dedent",
@@ -1782,6 +1783,7 @@ class BaseParser(object):
             "LBRACKET",
             "RBRACKET",
             "AT_LPAREN",
+            "AT_LBRACE",
             "BANG_LPAREN",
             "BANG_LBRACKET",
             "DOLLAR_LPAREN",
@@ -2372,6 +2374,7 @@ class BaseParser(object):
             "LBRACKET",
             "RBRACKET",
             "AT_LPAREN",
+            "AT_LBRACE",
             "BANG_LPAREN",
             "BANG_LBRACKET",
             "DOLLAR_LPAREN",
@@ -2551,6 +2554,7 @@ class BaseParser(object):
             "LBRACKET",
             "RBRACKET",
             "AT_LPAREN",
+            "AT_LBRACE",
             "BANG_LPAREN",
             "BANG_LBRACKET",
             "DOLLAR_LPAREN",
@@ -2597,6 +2601,7 @@ class BaseParser(object):
                           | LBRACE any_raw_toks_opt RBRACE
                           | LBRACKET any_raw_toks_opt RBRACKET
                           | AT_LPAREN any_raw_toks_opt RPAREN
+                          | AT_LBRACE any_raw_toks_opt RBRACE
                           | BANG_LPAREN any_raw_toks_opt RPAREN
                           | BANG_LBRACKET any_raw_toks_opt RBRACKET
                           | DOLLAR_LPAREN any_raw_toks_opt RPAREN
@@ -3177,6 +3182,23 @@ class BaseParser(object):
         p0._cliarg_action = "extend"
         p[0] = p0
 
+    def p_subproc_atom_pytext(self, p):
+        """subproc_atom : at_lbrace_tok testlist_comp RBRACE
+           subproc_arg_part : at_lbrace_tok testlist_comp RBRACE
+        """
+        # p1 = p[1]
+        # print(p[1], p[2], p[3])
+        # p0 = xonsh_call(
+        #     "__xonsh__.list_of_strs_or_callables",
+        #     [p[2]],
+        #     lineno=p1.lineno,
+        #     col=p1.lexpos,
+        # )
+        # p0._cliarg_action = "extend"
+        # p[0] = p0
+        pass
+
+
     def p_subproc_atom_subproc_inject(self, p):
         """subproc_atom : atdollar_lparen_tok subproc RPAREN
            subproc_arg_part : atdollar_lparen_tok subproc RPAREN
@@ -3306,6 +3328,7 @@ class BaseParser(object):
             "LBRACKET",
             "RBRACKET",
             "AT_LPAREN",
+            "AT_LBRACE",
             "BANG_LPAREN",
             "BANG_LBRACKET",
             "DOLLAR_LPAREN",

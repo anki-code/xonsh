@@ -158,6 +158,7 @@ _xonsh_tokens = {
     "||": "DOUBLEPIPE",
     "&&": "DOUBLEAMPER",
     "@(": "ATLPAREN",
+    "@{": "ATLBRACE",
     "!(": "BANGLPAREN",
     "![": "BANGLBRACKET",
     "$(": "DOLLARLPAREN",
@@ -167,7 +168,7 @@ _xonsh_tokens = {
     "@$(": "ATDOLLARLPAREN",
 }
 
-additional_parenlevs = frozenset({"@(", "!(", "![", "$(", "$[", "${", "@$("})
+additional_parenlevs = frozenset({"@(", "@{", "!(", "![", "$(", "$[", "${", "@$("})
 
 _glbs = globals()
 for v in _xonsh_tokens.values():
@@ -347,6 +348,7 @@ Operator = group(
     r"\|\|",
     "&&",
     r"@\(",
+    r"@\{",
     r"!\(",
     r"!\[",
     r"\$\(",

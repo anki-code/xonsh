@@ -1614,6 +1614,7 @@ class XonshLexer(Python3Lexer):
         "mode_switch_brackets": [
             (r"(\$)(\{)", bygroups(Keyword, Punctuation), "py_curly_bracket"),
             (r"(@)(\()", bygroups(Keyword, Punctuation), "py_bracket"),
+            (r"(@)(\{)", bygroups(Keyword, Punctuation), "py_curly_bracket"),
             (
                 r"([\!\$])(\()",
                 bygroups(Keyword, Punctuation),

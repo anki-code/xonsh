@@ -323,6 +323,7 @@ def special_handlers():
     _make_matcher_handler("!(", "BANG_LPAREN", False, ")", sh)
     _make_matcher_handler("![", "BANG_LBRACKET", False, "]", sh)
     _make_matcher_handler("@(", "AT_LPAREN", True, ")", sh)
+    _make_matcher_handler("@{", "AT_LBRACE", True, "}", sh)
     _make_matcher_handler("@$(", "ATDOLLAR_LPAREN", False, ")", sh)
     return sh
 
@@ -500,6 +501,7 @@ class Lexer(object):
                     "LBRACE",
                     "RBRACE",  # { }
                     "AT_LPAREN",  # @(
+                    "AT_LBRACE",  # @{
                     "BANG_LPAREN",  # !(
                     "BANG_LBRACKET",  # ![
                     "DOLLAR_LPAREN",  # $(
