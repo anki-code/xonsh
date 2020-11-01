@@ -2,7 +2,7 @@ import os
 import inspect
 import pytest
 
-from xonsh.aliases import xexec
+from xonsh2.aliases import xexec
 
 
 @pytest.fixture

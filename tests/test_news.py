@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from xonsh.platform import scandir
+from xonsh2.platform import scandir
 
 
 NEWSDIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "news")

@@ -9,14 +9,14 @@ import warnings
 
 import pytest
 
-from xonsh import __version__
-from xonsh.platform import (
+from xonsh2 import __version__
+from xonsh2.platform import (
     ON_WINDOWS,
     HAS_PYGMENTS,
 )
-from xonsh.lexer import Lexer
+from xonsh2.lexer import Lexer
 
-from xonsh.tools import (
+from xonsh2.tools import (
     EnvPath,
     always_false,
     always_true,
@@ -86,7 +86,7 @@ from xonsh.tools import (
     register_custom_style,
     simple_random_choice,
 )
-from xonsh.environ import Env
+from xonsh2.environ import Env
 
 from tools import skip_if_on_windows
 

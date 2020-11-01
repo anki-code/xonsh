@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from xonsh.tools import EnvPath
-from xonsh.jsonutils import serialize_xonsh_json
+from xonsh2.tools import EnvPath
+from xonsh2.jsonutils import serialize_xonsh_json
 
 
 @pytest.mark.parametrize(

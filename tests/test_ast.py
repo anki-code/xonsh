@@ -1,8 +1,8 @@
 """Xonsh AST tests."""
 import ast as pyast
 
-from xonsh import ast
-from xonsh.ast import Tuple, Name, Store, min_line, Call, BinOp, isexpression
+from xonsh2 import ast
+from xonsh2.ast import Tuple, Name, Store, min_line, Call, BinOp, isexpression
 
 import pytest
 

@@ -2,9 +2,9 @@ import pytest
 from unittest.mock import MagicMock
 from prompt_toolkit.completion import Completion as PTKCompletion
 
-from xonsh.aliases import Aliases
-from xonsh.completers.tools import RichCompletion
-from xonsh.ptk_shell.completer import PromptToolkitCompleter
+from xonsh2.aliases import Aliases
+from xonsh2.completers.tools import RichCompletion
+from xonsh2.ptk_shell.completer import PromptToolkitCompleter
 
 
 @pytest.mark.parametrize(

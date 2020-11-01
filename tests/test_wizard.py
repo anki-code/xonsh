@@ -5,7 +5,7 @@ import os
 
 import pytest  # noqa F401
 
-from xonsh.wizard import (
+from xonsh2.wizard import (
     Wizard,
     Pass,
     PrettyFormatter,

@@ -7,11 +7,11 @@ import os.path
 import subprocess
 
 import pytest
-from xonsh import dirstack
-from xonsh.environ import Env
-from xonsh.dirstack import DIRSTACK
-from xonsh.platform import ON_WINDOWS
-from xonsh.dirstack import _unc_tempDrives
+from xonsh2 import dirstack
+from xonsh2.environ import Env
+from xonsh2.dirstack import DIRSTACK
+from xonsh2.platform import ON_WINDOWS
+from xonsh2.dirstack import _unc_tempDrives
 
 HERE = os.path.abspath(os.path.dirname(__file__))
 PARENT = os.path.dirname(HERE)

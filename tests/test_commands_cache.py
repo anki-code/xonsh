@@ -3,7 +3,7 @@ import builtins
 
 import pytest
 
-from xonsh.commands_cache import (
+from xonsh2.commands_cache import (
     CommandsCache,
     predict_shell,
     SHELL_PREDICTOR_PARSER,

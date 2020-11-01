@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from xonsh.built_ins import (
+from xonsh2.built_ins import (
     ensure_list_of_strs,
     XonshSession,
     pathsearch,
@@ -19,10 +19,10 @@ from xonsh.built_ins import (
     _BuiltIns,
     eval_fstring_field,
 )
-from xonsh.execer import Execer
-from xonsh.jobs import tasks
-from xonsh.events import events
-from xonsh.platform import ON_WINDOWS
+from xonsh2.execer import Execer
+from xonsh2.jobs import tasks
+from xonsh2.events import events
+from xonsh2.platform import ON_WINDOWS
 
 from tools import DummyShell, sp, DummyCommandsCache, DummyEnv, DummyHistory
 

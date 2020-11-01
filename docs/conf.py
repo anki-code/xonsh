@@ -15,11 +15,11 @@ import importlib
 
 os.environ["XONSH_DEBUG"] = "1"
 
-from xonsh import __version__ as XONSH_VERSION
-from xonsh.environ import DEFAULT_VARS, Env
-from xonsh.xontribs import xontrib_metadata
-from xonsh import main
-from xonsh.commands_cache import CommandsCache
+from xonsh2 import __version__ as XONSH_VERSION
+from xonsh2.environ import DEFAULT_VARS, Env
+from xonsh2.xontribs import xontrib_metadata
+from xonsh2 import main
+from xonsh2.commands_cache import CommandsCache
 
 if not hasattr(builtins, "__xonsh__"):
     from argparse import Namespace
@@ -32,9 +32,9 @@ spec = importlib.util.find_spec("prompt_toolkit")
 if spec is not None:
     # hacky runaround to import PTK-specific events
     builtins.__xonsh__.env = Env()
-    from xonsh.ptk_shell.shell import events
+    from xonsh2.ptk_shell.shell import events
 else:
-    from xonsh.events import events
+    from xonsh2.events import events
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -438,7 +438,7 @@ builtins.__xonsh__.commands_cache = CommandsCache()
 
 
 def setup(app):
-    from xonsh.pyghooks import XonshConsoleLexer
+    from xonsh2.pyghooks import XonshConsoleLexer
 
     app.add_lexer("xonshcon", XonshConsoleLexer())
     app.add_css_file("custom.css")

@@ -1,7 +1,7 @@
 """Tests ANSI color tools."""
 import pytest
 
-from xonsh.ansi_colors import (
+from xonsh2.ansi_colors import (
     ansi_color_escape_code_to_name,
     ansi_reverse_style,
     ansi_color_name_to_escape_code,

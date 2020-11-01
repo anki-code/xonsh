@@ -13,12 +13,12 @@ posix command line utility with the same name. This is because these
 tools avoid the need for a full subprocess call. Additionally, these
 tools are cross-platform.
 """
-from xonsh.xoreutils.cat import cat
-from xonsh.xoreutils.echo import echo
-from xonsh.xoreutils.pwd import pwd
-from xonsh.xoreutils.tee import tee
-from xonsh.xoreutils.tty import tty
-from xonsh.xoreutils.yes import yes
+from xonsh2.xoreutils.cat import cat
+from xonsh2.xoreutils.echo import echo
+from xonsh2.xoreutils.pwd import pwd
+from xonsh2.xoreutils.tee import tee
+from xonsh2.xoreutils.tty import tty
+from xonsh2.xoreutils.yes import yes
 
 __all__ = ()
 

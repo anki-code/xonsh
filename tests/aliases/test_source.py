@@ -3,7 +3,7 @@ import pytest
 
 from contextlib import contextmanager
 from unittest.mock import MagicMock
-from xonsh.aliases import source_alias, builtins
+from xonsh2.aliases import source_alias, builtins
 
 
 @pytest.fixture

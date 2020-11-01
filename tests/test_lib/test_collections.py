@@ -1,4 +1,4 @@
-from xonsh.lib.collections import ChainDB
+from xonsh2.lib.collections import ChainDB
 
 
 def test_dddi():

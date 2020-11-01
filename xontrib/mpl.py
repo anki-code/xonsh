@@ -2,8 +2,8 @@
 is imported.
 """
 
-from xonsh.tools import unthreadable
-from xonsh.lazyasd import lazyobject
+from xonsh2.tools import unthreadable
+from xonsh2.lazyasd import lazyobject
 
 
 __all__ = ()

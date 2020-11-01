@@ -3,7 +3,7 @@
 from __future__ import unicode_literals, print_function
 from io import StringIO
 
-from xonsh.lazyjson import index, ljdump, LazyJSON, LJNode
+from xonsh2.lazyjson import index, ljdump, LazyJSON, LJNode
 
 
 def test_index_int():

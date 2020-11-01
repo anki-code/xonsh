@@ -2,9 +2,9 @@
 """(A down payment on) Testing for ``xonsh.base_shell.BaseShell`` and associated classes"""
 import os
 
-from xonsh.environ import Env
-from xonsh.base_shell import BaseShell
-from xonsh.shell import transform_command
+from xonsh2.environ import Env
+from xonsh2.base_shell import BaseShell
+from xonsh2.shell import transform_command
 
 
 def test_pwd_tracks_cwd(xonsh_builtins, xonsh_execer, tmpdir_factory, monkeypatch):

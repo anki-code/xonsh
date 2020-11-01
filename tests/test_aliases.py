@@ -6,8 +6,8 @@ import os
 
 import pytest
 
-from xonsh.aliases import Aliases, ExecAlias
-from xonsh.environ import Env
+from xonsh2.aliases import Aliases, ExecAlias
+from xonsh2.environ import Env
 
 from tools import skip_if_on_windows
 

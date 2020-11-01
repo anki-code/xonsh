@@ -1,7 +1,7 @@
 """Tests color tools."""
 import pytest
 
-from xonsh.color_tools import iscolor
+from xonsh2.color_tools import iscolor
 
 
 @pytest.mark.parametrize(

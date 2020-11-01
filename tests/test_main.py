@@ -9,8 +9,8 @@ import os
 import os.path
 import sys
 
-import xonsh.main
-from xonsh.main import XonshMode
+import xonsh2.main
+from xonsh2.main import XonshMode
 import pytest
 from tools import TEST_DIR, skip_if_on_windows
 
@@ -30,32 +30,32 @@ def shell(xonsh_builtins, monkeypatch):
             delattr(builtins, xarg)
     gc.collect()
     Shell.shell_type_aliases = {"rl": "readline"}
-    monkeypatch.setattr(xonsh.main, "Shell", Shell)
+    monkeypatch.setattr(xonsh2.main, "Shell", Shell)
 
 
 def test_premain_no_arg(shell, monkeypatch):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    xonsh.main.premain([])
+    xonsh2.main.premain([])
     assert builtins.__xonsh__.env.get("XONSH_LOGIN")
 
 
 def test_premain_interactive(shell):
-    xonsh.main.premain(["-i"])
+    xonsh2.main.premain(["-i"])
     assert builtins.__xonsh__.env.get("XONSH_INTERACTIVE")
 
 
 def test_premain_login_command(shell):
-    xonsh.main.premain(["-l", "-c", 'echo "hi"'])
+    xonsh2.main.premain(["-l", "-c", 'echo "hi"'])
     assert builtins.__xonsh__.env.get("XONSH_LOGIN")
 
 
 def test_premain_login(shell):
-    xonsh.main.premain(["-l"])
+    xonsh2.main.premain(["-l"])
     assert builtins.__xonsh__.env.get("XONSH_LOGIN")
 
 
 def test_premain_D(shell):
-    xonsh.main.premain(["-DTEST1=1616", "-DTEST2=LOL"])
+    xonsh2.main.premain(["-DTEST1=1616", "-DTEST2=LOL"])
     assert builtins.__xonsh__.env.get("TEST1") == "1616"
     assert builtins.__xonsh__.env.get("TEST2") == "LOL"
 
@@ -65,18 +65,18 @@ def test_premain_custom_rc(shell, tmpdir, monkeypatch):
     monkeypatch.setitem(os.environ, "XONSH_CACHE_SCRIPTS", "False")
     f = tmpdir.join("wakkawakka")
     f.write("print('hi')")
-    args = xonsh.main.premain(["--rc", f.strpath])
+    args = xonsh2.main.premain(["--rc", f.strpath])
     assert args.mode == XonshMode.interactive
     assert f.strpath in builtins.__xonsh__.env.get("XONSHRC")
 
 
 def test_no_rc_with_script(shell, tmpdir):
-    args = xonsh.main.premain(["tests/sample.xsh"])
+    args = xonsh2.main.premain(["tests/sample.xsh"])
     assert not (args.mode == XonshMode.interactive)
 
 
 def test_force_interactive_rc_with_script(shell, tmpdir):
-    xonsh.main.premain(["-i", "tests/sample.xsh"])
+    xonsh2.main.premain(["-i", "tests/sample.xsh"])
     assert builtins.__xonsh__.env.get("XONSH_INTERACTIVE")
 
 
@@ -87,7 +87,7 @@ def test_force_interactive_custom_rc_with_script(shell, tmpdir, monkeypatch):
     monkeypatch.setitem(os.environ, "XONSH_CACHE_SCRIPTS", "False")
     f = tmpdir.join("wakkawakka")
     f.write("print('hi')")
-    args = xonsh.main.premain(["-i", "--rc", f.strpath, "tests/sample.xsh"])
+    args = xonsh2.main.premain(["-i", "--rc", f.strpath, "tests/sample.xsh"])
     assert args.mode == XonshMode.interactive
     assert f.strpath in builtins.__xonsh__.env.get("XONSHRC")
 
@@ -98,12 +98,12 @@ def test_custom_rc_with_script(shell, tmpdir):
     """
     f = tmpdir.join("wakkawakka")
     f.write("print('hi')")
-    args = xonsh.main.premain(["--rc", f.strpath, "tests/sample.xsh"])
+    args = xonsh2.main.premain(["--rc", f.strpath, "tests/sample.xsh"])
     assert not (args.mode == XonshMode.interactive)
 
 
 def test_premain_no_rc(shell, tmpdir):
-    xonsh.main.premain(["--no-rc", "-i"])
+    xonsh2.main.premain(["--no-rc", "-i"])
     assert not builtins.__xonsh__.env.get("XONSHRC")
 
 
@@ -111,24 +111,24 @@ def test_premain_no_rc(shell, tmpdir):
     "arg", ["", "-i", "-vERSION", "-hAALP", "TTTT", "-TT", "--TTT"]
 )
 def test_premain_with_file_argument(arg, shell):
-    xonsh.main.premain(["tests/sample.xsh", arg])
+    xonsh2.main.premain(["tests/sample.xsh", arg])
     assert not (builtins.__xonsh__.env.get("XONSH_INTERACTIVE"))
 
 
 def test_premain_interactive__with_file_argument(shell):
-    xonsh.main.premain(["-i", "tests/sample.xsh"])
+    xonsh2.main.premain(["-i", "tests/sample.xsh"])
     assert builtins.__xonsh__.env.get("XONSH_INTERACTIVE")
 
 
 @pytest.mark.parametrize("case", ["----", "--hep", "-TT", "--TTTT"])
 def test_premain_invalid_arguments(shell, case, capsys):
     with pytest.raises(SystemExit):
-        xonsh.main.premain([case])
+        xonsh2.main.premain([case])
     assert "unrecognized argument" in capsys.readouterr()[1]
 
 
 def test_premain_timings_arg(shell):
-    xonsh.main.premain(["--timings"])
+    xonsh2.main.premain(["--timings"])
 
 
 @skip_if_on_windows
@@ -167,7 +167,7 @@ def test_xonsh_failback(
     def mocked_main(*args):
         raise Exception("A fake failure")
 
-    monkeypatch.setattr(xonsh.main, "main_xonsh", mocked_main)
+    monkeypatch.setattr(xonsh2.main, "main_xonsh", mocked_main)
 
     def mocked_execlp(f, *args):
         failback_checker.append(f)
@@ -186,7 +186,7 @@ def test_xonsh_failback(
     monkeypatch.setenv("SHELL", env_shell)
 
     try:
-        xonsh.main.main()  # if main doesn't raise, it did try to invoke a shell
+        xonsh2.main.main()  # if main doesn't raise, it did try to invoke a shell
         assert failback_checker[0] == exp_shell
         assert failback_checker[1] == failback_checker[0]
     except Exception as e:
@@ -205,11 +205,11 @@ def test_xonsh_failback_single(shell, monkeypatch, monkeypatch_stderr):
     def mocked_main(*args):
         raise FakeFailureError()
 
-    monkeypatch.setattr(xonsh.main, "main_xonsh", mocked_main)
+    monkeypatch.setattr(xonsh2.main, "main_xonsh", mocked_main)
     monkeypatch.setattr(sys, "argv", ["xonsh", "-c", "echo", "foo"])
 
     with pytest.raises(FakeFailureError):
-        xonsh.main.main()
+        xonsh2.main.main()
 
 
 def test_xonsh_failback_script_from_file(shell, monkeypatch, monkeypatch_stderr):
@@ -223,11 +223,11 @@ def test_xonsh_failback_script_from_file(shell, monkeypatch, monkeypatch_stderr)
     script = os.path.join(TEST_DIR, "scripts", "raise.xsh")
     monkeypatch.setattr(sys, "argv", ["xonsh", script])
     with pytest.raises(Exception):
-        xonsh.main.main()
+        xonsh2.main.main()
     assert len(checker) == 0
 
 
 def test_xonsh_no_file_returncode(shell, monkeypatch, monkeypatch_stderr):
     monkeypatch.setattr(sys, "argv", ["xonsh", "foobazbarzzznotafileatall.xsh"])
     with pytest.raises(SystemExit):
-        xonsh.main.main()
+        xonsh2.main.main()

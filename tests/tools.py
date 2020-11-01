@@ -13,8 +13,8 @@ from collections.abc import MutableMapping
 
 import pytest
 
-from xonsh.environ import Env
-from xonsh.base_shell import BaseShell
+from xonsh2.environ import Env
+from xonsh2.base_shell import BaseShell
 
 
 VER_MAJOR_MINOR = sys.version_info[:2]

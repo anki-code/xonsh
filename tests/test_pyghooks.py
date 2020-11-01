@@ -5,9 +5,9 @@ import stat
 import pathlib
 
 from tempfile import TemporaryDirectory
-from xonsh.platform import ON_WINDOWS
+from xonsh2.platform import ON_WINDOWS
 
-from xonsh.pyghooks import (
+from xonsh2.pyghooks import (
     XonshStyle,
     Color,
     Token,
@@ -19,7 +19,7 @@ from xonsh.pyghooks import (
     register_custom_pygments_style,
 )
 
-from xonsh.environ import LsColors
+from xonsh2.environ import LsColors
 
 
 @pytest.fixture
@@ -141,7 +141,7 @@ def test_code_by_name(name, exp):
 def test_color_token_by_name(
     in_tuple, exp_ct, exp_ansi_colors, xonsh_builtins_LS_COLORS
 ):
-    from xonsh.pyghooks import XonshStyle, color_token_by_name
+    from xonsh2.pyghooks import XonshStyle, color_token_by_name
 
     xs = XonshStyle()
     styles = xs.styles
@@ -322,14 +322,14 @@ def test_colorize_file_symlink(
     assert color_key == tar_color_key, "File classified as expected kind, via symlink"
 
 
-import xonsh.lazyimps
+import xonsh2.lazyimps
 
 
 def test_colorize_file_ca(xonsh_builtins_LS_COLORS, monkeypatch):
     def mock_os_listxattr(*args, **kwards):
         return ["security.capability"]
 
-    monkeypatch.setattr(xonsh.pyghooks, "os_listxattr", mock_os_listxattr)
+    monkeypatch.setattr(xonsh2.pyghooks, "os_listxattr", mock_os_listxattr)
 
     with TemporaryDirectory() as tmpdir:
         file_path = tmpdir + "/cap_file"

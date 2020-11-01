@@ -1,6 +1,6 @@
 import pytest
 
-from xonsh.completers.pip import PIP_RE, PIP_LIST_RE
+from xonsh2.completers.pip import PIP_RE, PIP_LIST_RE
 
 
 @pytest.mark.parametrize(

@@ -7,8 +7,8 @@ import os
 
 import pytest  # noqa F401
 
-from xonsh import dirstack
-from xonsh.environ import Env
+from xonsh2 import dirstack
+from xonsh2.environ import Env
 
 
 HERE = os.path.abspath(os.path.dirname(__file__))

@@ -3,7 +3,7 @@
 import sys
 import textwrap
 import xontrib.voxapi as voxapi
-import xonsh.lazyasd as lazyasd
+import xonsh2.lazyasd as lazyasd
 
 __all__ = ()
 
@@ -45,7 +45,7 @@ class VoxHandler:
             ).strip(),
         )
 
-        from xonsh.platform import ON_WINDOWS
+        from xonsh2.platform import ON_WINDOWS
 
         group = create.add_mutually_exclusive_group()
         group.add_argument(

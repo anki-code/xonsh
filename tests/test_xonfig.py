@@ -12,8 +12,8 @@ import sys
 import json
 import pytest  # noqa F401
 
-from xonsh.tools import ON_WINDOWS
-from xonsh.xonfig import XONFIG_MAIN_ACTIONS, xonfig_main
+from xonsh2.tools import ON_WINDOWS
+from xonsh2.xonfig import XONFIG_MAIN_ACTIONS, xonfig_main
 
 
 def test_xonfg_help(capsys, xonsh_builtins):

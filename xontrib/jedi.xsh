@@ -1,9 +1,9 @@
 """Use Jedi as xonsh's python completer."""
 import itertools
 
-import xonsh
-from xonsh.lazyasd import lazyobject, lazybool
-from xonsh.completers.tools import (
+import xonsh2
+from xonsh2.lazyasd import lazyobject, lazybool
+from xonsh2.completers.tools import (
     get_filter_function,
     get_ptk_completer,
     RichCompletion,
@@ -135,7 +135,7 @@ def create_completion(comp):
 
 
 # monkey-patch the original python completer in 'base'.
-xonsh.completers.base.complete_python = complete_jedi
+xonsh2.completers.base.complete_python = complete_jedi
 
 # Jedi ignores leading '@(' and friends
 completer remove python_mode

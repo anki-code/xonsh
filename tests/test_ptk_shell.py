@@ -4,12 +4,12 @@
 import sys
 import pytest
 
-from xonsh.platform import minimum_required_ptk_version
+from xonsh2.platform import minimum_required_ptk_version
 
 # verify error if ptk not installed or below min
 
-from xonsh.ptk_shell.shell import tokenize_ansi, remove_ansi_osc
-from xonsh.shell import Shell
+from xonsh2.ptk_shell.shell import tokenize_ansi, remove_ansi_osc
+from xonsh2.shell import Shell
 
 
 @pytest.mark.parametrize(

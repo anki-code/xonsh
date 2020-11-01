@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch
 
-import xonsh.completers.path as xcp
+import xonsh2.completers.path as xcp
 
 
 @pytest.fixture(autouse=True)

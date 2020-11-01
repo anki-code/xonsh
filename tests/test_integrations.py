@@ -8,7 +8,7 @@ import subprocess as sp
 
 import pytest
 
-from xonsh.lib.os import indir
+from xonsh2.lib.os import indir
 
 from tools import (
     skip_if_on_msys,

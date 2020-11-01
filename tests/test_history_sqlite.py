@@ -4,8 +4,8 @@
 import os
 import shlex
 
-from xonsh.history.sqlite import SqliteHistory
-from xonsh.history.main import history_main
+from xonsh2.history.sqlite import SqliteHistory
+from xonsh2.history.main import history_main
 
 import pytest
 

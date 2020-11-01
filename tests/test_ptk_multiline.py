@@ -9,8 +9,8 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.document import Document
 from prompt_toolkit.buffer import Buffer
 
-from xonsh.tools import ON_WINDOWS
-from xonsh.built_ins import XonshSession
+from xonsh2.tools import ON_WINDOWS
+from xonsh2.built_ins import XonshSession
 
 from tools import DummyEnv
 
@@ -23,7 +23,7 @@ def ctx():
     builtins.__xonsh__ = XonshSession()
     builtins.__xonsh__.env = DummyEnv()
     builtins.__xonsh__.env["INDENT"] = "    "
-    from xonsh.ptk_shell.key_bindings import carriage_return
+    from xonsh2.ptk_shell.key_bindings import carriage_return
 
     ptk_buffer = Buffer()
     ptk_buffer.accept_action = MagicMock(name="accept")

@@ -5,12 +5,12 @@ import os
 import re
 import pathlib
 from tempfile import TemporaryDirectory
-from xonsh.tools import always_true, DefaultNotGiven
+from xonsh2.tools import always_true, DefaultNotGiven
 
 import pytest
 
-from xonsh.commands_cache import CommandsCache
-from xonsh.environ import (
+from xonsh2.commands_cache import CommandsCache
+from xonsh2.environ import (
     Env,
     locate_binary,
     default_env,

@@ -17,12 +17,12 @@ import collections.abc
 import subprocess as sp
 
 
-from xonsh.platform import ON_POSIX, ON_WINDOWS
+from xonsh2.platform import ON_POSIX, ON_WINDOWS
 
 
 # This is because builtins aren't globally created during testing.
 # FIXME: Is there a better way?
-from xonsh.events import events
+from xonsh2.events import events
 
 
 events.doc(

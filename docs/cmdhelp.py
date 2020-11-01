@@ -24,7 +24,7 @@ from docutils.statemachine import ViewList
 
 from sphinx.util.nodes import nested_parse_with_titles
 
-from xonsh.tools import redirect_stdout, redirect_stderr
+from xonsh2.tools import redirect_stdout, redirect_stderr
 
 
 class CommandHelp(Directive):

@@ -5,9 +5,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from xonsh.environ import Env
-from xonsh.prompt.base import PromptFormatter, PROMPT_FIELDS
-from xonsh.prompt import vc
+from xonsh2.environ import Env
+from xonsh2.prompt.base import PromptFormatter, PROMPT_FIELDS
+from xonsh2.prompt import vc
 
 from tools import DummyEnv
 

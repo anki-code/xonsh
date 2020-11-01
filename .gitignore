@@ -8,8 +8,8 @@ __amalgam__.py
 lexer_table.py
 parser_table.py
 parser_test_table.py
-xonsh/lexer_table.py
-xonsh/parser_table.py
+xonsh2/lexer_table.py
+xonsh2/parser_table.py
 tests/lexer_table.py
 tests/parser_table.py
 tests/lexer_test_table.py
@@ -22,7 +22,7 @@ docs/_build/
 docs/envvarsbody
 docs/xontribsbody
 docs/eventsbody
-xonsh/dev.githash
+xonsh2/dev.githash
 
 # temporary files from vim and emacs
 *~
@@ -61,15 +61,15 @@ tags
 # Rever
 rever/
 # Allow the lib
-!/xonsh/lib
+!/xonsh2/lib
 
 
 # Allow tests/bin
 !/tests/bin
 
 # elm
-xonsh/webconfig/elm-stuff/
-xonsh/webconfig/js/app.js
+xonsh2/webconfig/elm-stuff/
+xonsh2/webconfig/js/app.js
 
 # venv (e.g, autovox)
 venv/

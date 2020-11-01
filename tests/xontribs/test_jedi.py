@@ -5,8 +5,8 @@ import builtins
 import importlib
 from unittest.mock import MagicMock, call
 
-from xonsh.xontribs import find_xontrib
-from xonsh.completers.tools import RichCompletion
+from xonsh2.xontribs import find_xontrib
+from xonsh2.completers.tools import RichCompletion
 
 
 @pytest.fixture

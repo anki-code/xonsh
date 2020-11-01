@@ -2,7 +2,7 @@
 from textwrap import dedent
 
 from tools import check_exec
-from xonsh.contexts import Block, Functor
+from xonsh2.contexts import Block, Functor
 
 import pytest
 

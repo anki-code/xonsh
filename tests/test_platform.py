@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import builtins
-import xonsh.platform as xp
+import xonsh2.platform as xp
 
 
 def test_githash_value_error(monkeypatch):

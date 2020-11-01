@@ -1,5 +1,5 @@
 """Tests lazy and self destruictive objects."""
-from xonsh.lazyasd import LazyObject
+from xonsh2.lazyasd import LazyObject
 
 #
 # LazyObject Tests

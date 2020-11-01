@@ -1,7 +1,7 @@
 """xontrib tests, such as they are"""
 import sys
 import pytest
-from xonsh.xontribs import xontrib_metadata, xontrib_context, xontribs_load, xontribs_loaded
+from xonsh2.xontribs import xontrib_metadata, xontrib_context, xontribs_load, xontribs_loaded
 
 
 def test_load_xontrib_metadata():

@@ -1,8 +1,8 @@
 """Tests for subprocess lib"""
 import tempfile
 
-from xonsh.lib.os import indir
-from xonsh.lib.subprocess import run, check_call, check_output, CalledProcessError
+from xonsh2.lib.os import indir
+from xonsh2.lib.subprocess import run, check_call, check_output, CalledProcessError
 
 import pytest
 

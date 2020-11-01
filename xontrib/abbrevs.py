@@ -7,8 +7,8 @@ This expands input words from `abbrevs` disctionary as you type.
 import builtins
 from prompt_toolkit.filters import completion_is_selected, IsMultiline
 from prompt_toolkit.keys import Keys
-from xonsh.built_ins import DynamicAccessProxy
-from xonsh.tools import check_for_partial_string
+from xonsh2.built_ins import DynamicAccessProxy
+from xonsh2.tools import check_for_partial_string
 
 __all__ = ()
 
@@ -74,7 +74,7 @@ def set_cursor_position(buffer):
 @events.on_ptk_create
 def custom_keybindings(bindings, **kw):
 
-    from xonsh.ptk_shell.key_bindings import carriage_return
+    from xonsh2.ptk_shell.key_bindings import carriage_return
     from prompt_toolkit.filters import EmacsInsertMode, ViInsertMode
 
     handler = bindings.add

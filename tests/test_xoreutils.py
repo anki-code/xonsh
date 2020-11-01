@@ -3,11 +3,11 @@ import os
 import tempfile
 import pytest
 
-from xonsh.xoreutils import _which
-from xonsh.xoreutils import uptime
-from xonsh.xoreutils import cat
-from xonsh.tools import ON_WINDOWS
-from xonsh.platform import DEFAULT_ENCODING
+from xonsh2.xoreutils import _which
+from xonsh2.xoreutils import uptime
+from xonsh2.xoreutils import cat
+from xonsh2.tools import ON_WINDOWS
+from xonsh2.platform import DEFAULT_ENCODING
 
 
 class TestWhich:

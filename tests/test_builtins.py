@@ -6,7 +6,7 @@ from ast import AST, Module, Interactive, Expression
 
 import pytest
 
-from xonsh.built_ins import (
+from xonsh2.built_ins import (
     reglob,
     pathsearch,
     helper,
@@ -21,7 +21,7 @@ from xonsh.built_ins import (
     call_macro,
     enter_macro,
 )
-from xonsh.environ import Env
+from xonsh2.environ import Env
 
 from tools import skip_if_on_windows
 

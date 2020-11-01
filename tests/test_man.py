@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import pytest  # noqa F401
-from xonsh.completers.man import complete_from_man
+from xonsh2.completers.man import complete_from_man
 
 from tools import skip_if_on_windows
 

@@ -6,10 +6,10 @@ from importlib import import_module
 
 import pytest
 
-from xonsh import imphooks
-from xonsh.execer import Execer
-from xonsh.environ import Env
-from xonsh.built_ins import unload_builtins
+from xonsh2 import imphooks
+from xonsh2.execer import Execer
+from xonsh2.environ import Env
+from xonsh2.built_ins import unload_builtins
 
 imphooks.install_import_hooks()
 

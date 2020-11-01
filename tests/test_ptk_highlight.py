@@ -18,11 +18,11 @@ from pygments.token import (
 )
 from tools import skip_if_on_windows
 
-from xonsh.platform import ON_WINDOWS
-from xonsh.built_ins import load_builtins, unload_builtins
-from xonsh.pyghooks import XonshLexer, Color, XonshStyle, on_lscolors_change
-from xonsh.environ import LsColors
-from xonsh.events import events, EventManager
+from xonsh2.platform import ON_WINDOWS
+from xonsh2.built_ins import load_builtins, unload_builtins
+from xonsh2.pyghooks import XonshLexer, Color, XonshStyle, on_lscolors_change
+from xonsh2.environ import LsColors
+from xonsh2.events import events, EventManager
 from tools import DummyShell
 
 

@@ -12,8 +12,8 @@ import builtins
 import functools
 from pathlib import Path
 
-from xonsh.tools import print_exception
-from xonsh.platform import ON_WINDOWS, ON_CYGWIN, ON_MSYS
+from xonsh2.tools import print_exception
+from xonsh2.platform import ON_WINDOWS, ON_CYGWIN, ON_MSYS
 
 
 def _chdir_up(path):

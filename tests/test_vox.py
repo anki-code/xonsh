@@ -8,7 +8,7 @@ import sys
 from xontrib.voxapi import Vox
 
 from tools import skip_if_on_conda, skip_if_on_msys
-from xonsh.platform import ON_WINDOWS
+from xonsh2.platform import ON_WINDOWS
 
 
 @skip_if_on_msys
@@ -236,7 +236,7 @@ def test_autovox(xonsh_builtins, tmpdir):
     Tests that autovox works
     """
     import importlib
-    import xonsh.dirstack
+    import xonsh2.dirstack
 
     # Set up an isolated venv home
     xonsh_builtins.__xonsh__.env["VIRTUALENV_HOME"] = str(tmpdir)
@@ -262,15 +262,15 @@ def test_autovox(xonsh_builtins, tmpdir):
     vox = Vox()
 
     print(xonsh_builtins.__xonsh__.env["PWD"])
-    xonsh.dirstack.pushd([str(tmpdir)])
+    xonsh2.dirstack.pushd([str(tmpdir)])
     print(xonsh_builtins.__xonsh__.env["PWD"])
     assert vox.active() is None
-    xonsh.dirstack.popd([])
+    xonsh2.dirstack.popd([])
     print(xonsh_builtins.__xonsh__.env["PWD"])
 
     vox.create("myenv")
-    xonsh.dirstack.pushd([str(tmpdir)])
+    xonsh2.dirstack.pushd([str(tmpdir)])
     print(xonsh_builtins.__xonsh__.env["PWD"])
     assert vox.active() == "myenv"
-    xonsh.dirstack.popd([])
+    xonsh2.dirstack.popd([])
     print(xonsh_builtins.__xonsh__.env["PWD"])

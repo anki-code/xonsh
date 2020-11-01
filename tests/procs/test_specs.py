@@ -3,11 +3,11 @@ from subprocess import Popen
 
 import pytest
 
-from xonsh.procs.specs import cmds_to_specs
+from xonsh2.procs.specs import cmds_to_specs
 
-from xonsh.environ import Env
-from xonsh.procs.posix import PopenThread
-from xonsh.procs.proxies import ProcProxy, ProcProxyThread
+from xonsh2.environ import Env
+from xonsh2.procs.posix import PopenThread
+from xonsh2.procs.proxies import ProcProxy, ProcProxyThread
 
 from .tools import skip_if_on_windows
 

@@ -6,9 +6,9 @@ import shlex
 
 import pytest
 
-from xonsh.lazyjson import LazyJSON
-from xonsh.history.dummy import DummyHistory
-from xonsh.history.json import (
+from xonsh2.lazyjson import LazyJSON
+from xonsh2.history.dummy import DummyHistory
+from xonsh2.history.json import (
     JsonHistory,
     _xhj_gc_commands_to_rmfiles,
     _xhj_gc_files_to_rmfiles,
@@ -16,7 +16,7 @@ from xonsh.history.json import (
     _xhj_gc_bytes_to_rmfiles,
 )
 
-from xonsh.history.main import history_main, _xh_parse_args, construct_history
+from xonsh2.history.main import history_main, _xh_parse_args, construct_history
 
 
 CMDS = ["ls", "cat hello kitty", "abc", "def", "touch me", "grep from me"]

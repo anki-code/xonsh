@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 
-from xonsh.tools import print_color, ON_WINDOWS
+from xonsh2.tools import print_color, ON_WINDOWS
 
 
 try:
