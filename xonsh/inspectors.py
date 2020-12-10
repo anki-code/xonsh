@@ -21,7 +21,8 @@ from xonsh.tokenize import detect_encoding
 from xonsh.openpy import read_py_file
 from xonsh.tools import cast_unicode, safe_hasattr, indent, print_color, format_color
 from xonsh.platform import HAS_PYGMENTS
-from xonsh.lazyimps import pygments, pyghooks
+from xonsh.lazyimps import pygments
+import xonsh.pyghooks as pyghooks
 from xonsh.style_tools import partial_color_tokenize
 
 

@@ -27,7 +27,8 @@ from xonsh.completer import Completer
 from xonsh.prompt.base import multiline_prompt, PromptFormatter
 from xonsh.events import events
 from xonsh.shell import transform_command
-from xonsh.lazyimps import pygments, pyghooks
+from xonsh.lazyimps import pygments
+import xonsh.pyghooks as pyghooks
 from xonsh.ansi_colors import ansi_partial_color_format
 
 if ON_WINDOWS:

@@ -25,10 +25,6 @@ from xonsh.prompt.gitstatus import gitstatus_prompt
 from xonsh.prompt.times import _localtime
 
 
-@xt.lazyobject
-def DEFAULT_PROMPT():
-    return default_prompt()
-
 
 class _ParsedToken(tp.NamedTuple):
     """It can either be a literal value alone or a field and its resultant value"""
@@ -76,6 +72,35 @@ def prompt_tokens_formatter_default(container: ParsedTokens) -> str:
         process the tokens and finally return the prompt string
     """
     return "".join([tok.value for tok in container.tokens])
+
+def default_prompt():
+    """Creates a new instance of the default prompt."""
+    if xp.ON_CYGWIN or xp.ON_MSYS:
+        dp = (
+            "{env_name}"
+            "{BOLD_GREEN}{user}@{hostname}"
+            "{BOLD_BLUE} {cwd} {prompt_end}{RESET} "
+        )
+    elif xp.ON_WINDOWS and not xp.win_ansi_support():
+        dp = (
+            "{env_name}"
+            "{BOLD_INTENSE_GREEN}{user}@{hostname}{BOLD_INTENSE_CYAN} "
+            "{cwd}{branch_color}{curr_branch: {}}{RESET} "
+            "{BOLD_INTENSE_CYAN}{prompt_end}{RESET} "
+        )
+    else:
+        dp = (
+            "{env_name}"
+            "{BOLD_GREEN}{user}@{hostname}{BOLD_BLUE} "
+            "{cwd}{branch_color}{curr_branch: {}}{RESET} "
+            "{BOLD_BLUE}{prompt_end}{RESET} "
+        )
+    return dp
+
+
+@xt.lazyobject
+def DEFAULT_PROMPT():
+    return default_prompt()
 
 
 class PromptFormatter:
@@ -174,29 +199,6 @@ def PROMPT_FIELDS():
     )
 
 
-def default_prompt():
-    """Creates a new instance of the default prompt."""
-    if xp.ON_CYGWIN or xp.ON_MSYS:
-        dp = (
-            "{env_name}"
-            "{BOLD_GREEN}{user}@{hostname}"
-            "{BOLD_BLUE} {cwd} {prompt_end}{RESET} "
-        )
-    elif xp.ON_WINDOWS and not xp.win_ansi_support():
-        dp = (
-            "{env_name}"
-            "{BOLD_INTENSE_GREEN}{user}@{hostname}{BOLD_INTENSE_CYAN} "
-            "{cwd}{branch_color}{curr_branch: {}}{RESET} "
-            "{BOLD_INTENSE_CYAN}{prompt_end}{RESET} "
-        )
-    else:
-        dp = (
-            "{env_name}"
-            "{BOLD_GREEN}{user}@{hostname}{BOLD_BLUE} "
-            "{cwd}{branch_color}{curr_branch: {}}{RESET} "
-            "{BOLD_BLUE}{prompt_end}{RESET} "
-        )
-    return dp
 
 
 def _failover_template_format(template):
@@ -295,3 +297,4 @@ def _format_value(val, spec, conv):
     if not isinstance(val, str):
         val = str(val)
     return val
+

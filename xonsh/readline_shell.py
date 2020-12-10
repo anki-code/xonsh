@@ -38,7 +38,8 @@ from xonsh.platform import (
     ON_POSIX,
     os_environ,
 )
-from xonsh.lazyimps import pygments, pyghooks, winutils
+from xonsh.lazyimps import pygments, winutils
+import xonsh.pyghooks as pyghooks
 from xonsh.events import events
 
 readline = None

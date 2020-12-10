@@ -810,16 +810,6 @@ def _type_pprinters():
     return tp
 
 
-#: printers for types specified by name
-@lazyobject
-def _deferred_type_pprinters():
-    dtp = {}
-    for_type_by_name("collections", "defaultdict", _defaultdict_pprint, dtp=dtp)
-    for_type_by_name("collections", "OrderedDict", _ordereddict_pprint, dtp=dtp)
-    for_type_by_name("collections", "deque", _deque_pprint, dtp=dtp)
-    for_type_by_name("collections", "Counter", _counter_pprint, dtp=dtp)
-    return dtp
-
 
 def for_type(typ, func):
     """
@@ -838,7 +828,12 @@ def for_type_by_name(type_module, type_name, func, dtp=None):
     rather than the type object itself.
     """
     if dtp is None:
-        dtp = _deferred_type_pprinters
+        dtp = {}
+        for_type_by_name("collections", "defaultdict", _defaultdict_pprint, dtp=dtp)
+        for_type_by_name("collections", "OrderedDict", _ordereddict_pprint, dtp=dtp)
+        for_type_by_name("collections", "deque", _deque_pprint, dtp=dtp)
+        for_type_by_name("collections", "Counter", _counter_pprint, dtp=dtp)
+        #dtp = _deferred_type_pprinters
     key = (type_module, type_name)
     oldfunc = dtp.get(key, None)
     if func is not None:
@@ -869,6 +864,7 @@ def _defaultdict_pprint(obj, p, cycle):
             p.pretty(dict(obj))
 
 
+
 def _ordereddict_pprint(obj, p, cycle):
     name = obj.__class__.__name__
     with p.group(len(name) + 1, name + "(", ")"):
@@ -894,3 +890,13 @@ def _counter_pprint(obj, p, cycle):
             p.text("...")
         elif len(obj):
             p.pretty(dict(obj))
+
+#: printers for types specified by name
+@lazyobject
+def _deferred_type_pprinters():
+    dtp = {}
+    for_type_by_name("collections", "defaultdict", _defaultdict_pprint, dtp=dtp)
+    for_type_by_name("collections", "OrderedDict", _ordereddict_pprint, dtp=dtp)
+    for_type_by_name("collections", "deque", _deque_pprint, dtp=dtp)
+    for_type_by_name("collections", "Counter", _counter_pprint, dtp=dtp)
+    return dtp
