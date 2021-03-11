@@ -28,6 +28,8 @@ from xonsh.procs.pipelines import (
     STDOUT_CAPTURE_KINDS,
 )
 
+from collections.abc import Iterable
+
 
 @xl.lazyobject
 def RE_SHEBANG():
@@ -555,6 +557,7 @@ class SubprocSpec:
         spec.redirect_leading()
         spec.redirect_trailing()
         # apply aliases
+        spec.resolve_callable()
         spec.resolve_alias()
         spec.resolve_binary_loc()
         spec.resolve_auto_cd()
@@ -583,6 +586,24 @@ class SubprocSpec:
                 self.cmd = cmd[:-1]
             else:
                 break
+
+    def resolve_callable(self):
+        new_cmd = []
+        for c in self.cmd:
+            if callable(c):
+                args = c()
+                if type(args) == list:
+                    for a in args:
+                        if not isinstance(a, str):
+                            raise Exception(f'Callable argument {c.__name__} returns {type(a)} element in the list.')
+                        new_cmd += [a]
+                else:
+                    if not isinstance(args, str):
+                        raise Exception(f'Callable argument {c.__name__} returns {type(args)} instead of string.')
+                    new_cmd += [args]
+            else:
+                new_cmd += [c]
+        self.cmd = new_cmd
 
     def resolve_alias(self):
         """Sets alias in command, if applicable."""
