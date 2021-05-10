@@ -555,6 +555,7 @@ class SubprocSpec:
         """
         # modifications that do not alter cmds may come before creating instance
         spec = kls(cmd, cls=cls, **kwargs)
+        spec.expand_arg2_alias()
         # modifications that alter cmds must come after creating instance
         # perform initial redirects
         spec.redirect_leading()
@@ -606,6 +607,14 @@ class SubprocSpec:
             if alias is not None:
                 self.alias_name = cmd0
         self.alias = alias
+
+    def expand_arg2_alias(self):
+        """Expand the alias in arg2."""
+        if len(self.cmd) >= 2:
+            cmd0 = self.cmd[0]
+            cmd1_expand = builtins.aliases.eval_alias([self.cmd[1]])
+            if cmd0 in builtins.__xonsh__.env.get('XONSH_EXPAND_ARG2_ALIAS_CMDS', []) and type(cmd1_expand) is list:
+                self.cmd = [cmd0] + cmd1_expand + self.cmd[2:]
 
     def resolve_binary_loc(self):
         """Sets the binary location"""
