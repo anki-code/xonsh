@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-appimage:
-    if: github.repository_owner == 'xonsh'
+    if: github.repository_owner == 'anki-code'
     runs-on: ubuntu-latest
     permissions:
       contents: write
