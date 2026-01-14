@@ -205,6 +205,7 @@ class PromptToolkitShell(BaseShell):
         self.prompter: PromptSession = PromptSession(**ptk_args)
 
         self.prompt_formatter = PTKPromptFormatter(self)
+        self.prompt_input_processors = None
         self.pt_completer = PromptToolkitCompleter(self.completer, self.ctx, self)
         ptk_bindings = self.prompter.app.key_bindings
         self.key_bindings = load_xonsh_bindings(ptk_bindings)
@@ -364,6 +365,7 @@ class PromptToolkitShell(BaseShell):
             "include_default_pygments_style": False,
             "refresh_interval": refresh_interval,
             "complete_in_thread": complete_in_thread,
+            "input_processors": self.prompt_input_processors,
         }
         env["XONSH_PROMPT_NEXT_CMD"] = ""
         if env["ENABLE_ASYNC_PROMPT"]:
