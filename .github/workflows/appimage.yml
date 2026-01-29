@@ -41,22 +41,22 @@ jobs:
              && micromamba activate base \
              && micromamba install -y -c conda-forge libpython-static==$PYTHON_VER gcc ccache \
              && pip install -U pip setuptools wheel certifi \
-             && pip install '.[full]' ujson pygments prompt_toolkit pyperclip 
-             && pip install xontrib-sh xontrib-prompt-starship
+             && pip install '.[full]' ujson pygments prompt_toolkit pyperclip \
+             && pip install xontrib-sh xontrib-prompt-starship \
              && pip install git+https://github.com/Nuitka/Nuitka@factory
 
       - name: Activate mamba and test xonsh
         run: |
           eval "$(/home/runner/.local/bin/micromamba shell hook -s bash)" \
              && micromamba activate base \
-             && xonsh --version
+             && xonsh --version \
              && xonsh -c '21+21'
 
       - name: Activate mamba and run Nuitka build
         run: |
           eval "$(/home/runner/.local/bin/micromamba shell hook -s bash)" \
              && micromamba activate base \
-             && nuitka --version
+             && nuitka --version \
              && nuitka \
                   --standalone \
                   --onefile \
