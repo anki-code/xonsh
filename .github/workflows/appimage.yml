@@ -12,6 +12,9 @@ jobs:
     permissions:
       contents: write
 
+    env:
+      PYTHON_VER: 3.11
+      
     steps:
       - uses: actions/checkout@v6
 
@@ -22,19 +25,71 @@ jobs:
           cache: 'pip'
           cache-dependency-path: 'pyproject.toml'
 
-      - name: install python-appimage
-        run: pip install python-appimage
-
-      - name: create requirements.txt
+      - name: Install packages from apt
         run: |
-          echo $PWD > ./appimage/requirements.txt
-          cat ./appimage/pre-requirements.txt >> ./appimage/requirements.txt
+          uname -a
+          sudo apt install -y curl git vim patchelf elfutils binutils-common binutils
 
-      - name: build xonsh AppImage
+      - name: Install mamba
         run: |
-          python -m python_appimage build app -p 3.11 ./appimage
+          yes | bash -c "$(curl -L https://micro.mamba.pm/install.sh)"
+          /home/runner/.local/bin/micromamba info
 
-      # ---- Получить upload_url последнего релиза ----
+      - name: Activate mamba and install packages
+        run: |
+          eval "$(/home/runner/.local/bin/micromamba shell hook -s bash)" \
+             && micromamba activate base \
+             && micromamba install -y -c conda-forge libpython-static==$PYTHON_VER gcc ccache \
+             && pip install -U pip setuptools wheel certifi \
+             && pip install '.[full]' ujson pygments prompt_toolkit pyperclip \
+             && pip install xontrib-sh xontrib-prompt-starship \
+             && pip install git+https://github.com/Nuitka/Nuitka@factory
+
+      - name: Activate mamba and test xonsh
+        run: |
+          eval "$(/home/runner/.local/bin/micromamba shell hook -s bash)" \
+             && micromamba activate base \
+             && xonsh --version \
+             && xonsh -c '21+21'
+
+      - name: Activate mamba and run Nuitka build
+        continue-on-error: true
+        run: |
+          eval "$(/home/runner/.local/bin/micromamba shell hook -s bash)" \
+             && micromamba activate base \
+             && nuitka --version \
+             && nuitka \
+                  --standalone \
+                  --onefile \
+                  --static-libpython=yes \
+                  --no-deployment-flag=self-execution \
+                  --onefile-tempdir-spec='%TEMP%/onefile_%PID%_%TIME%' \
+                  --show-progress \
+                  --show-scons \
+                  --show-modules \
+                  --assume-yes-for-downloads \
+                  --jobs=2 \
+                  --include-package=pip \
+                  --include-package=setuptools \
+                  --include-package=wheel \
+                  --include-package=certifi \
+                  --include-package-data=certifi \
+                  --include-module=ujson \
+                  --include-package=pygments \
+                  --include-package=prompt_toolkit \
+                  --include-module=pyperclip \
+                  /home/runner/micromamba/lib/python$PYTHON_VER/site-packages/xonsh
+
+      - name: Show Nuitka crash report if exists
+        run: |
+          [ -f nuitka-crash-report.xml ] && cat nuitka-crash-report.xml
+
+      - name: Rename binary file
+        run: |
+          ls -lah xonsh.bin
+          ./xonsh.bin --version
+          mv xonsh.bin xonsh-py$PYTHON_VER-glibc-$(uname -m).bin
+
       - name: Get latest release upload URL
         id: get_release
         uses: actions/github-script@v7
