@@ -22,8 +22,11 @@ jobs:
           cache: 'pip'
           cache-dependency-path: 'pyproject.toml'
 
-      - name: install python-appimage
-        run: pip install python-appimage
+      - name: install
+        run: |
+          uname
+          uname -a
+          apt update && apt install -y curl git vim patchelf elfutils binutils-common binutils
 
       - name: create requirements.txt
         run: |
@@ -34,7 +37,6 @@ jobs:
         run: |
           python -m python_appimage build app -p 3.11 ./appimage
 
-      # ---- Получить upload_url последнего релиза ----
       - name: Get latest release upload URL
         id: get_release
         uses: actions/github-script@v7
