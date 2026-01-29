@@ -53,6 +53,7 @@ jobs:
              && xonsh -c '21+21'
 
       - name: Activate mamba and run Nuitka build
+        continue-on-error: true
         run: |
           eval "$(/home/runner/.local/bin/micromamba shell hook -s bash)" \
              && micromamba activate base \
@@ -78,6 +79,10 @@ jobs:
                   --include-package=prompt_toolkit \
                   --include-module=pyperclip \
                   /home/runner/micromamba/lib/python$PYTHON_VER/site-packages/xonsh
+
+      - name: Show Nuitka crash report if exists
+        run: |
+          [ -f nuitka-crash-report.xml ] && cat nuitka-crash-report.xml
 
       - name: Rename binary file
         run: |
