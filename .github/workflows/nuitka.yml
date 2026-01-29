@@ -41,7 +41,6 @@ jobs:
       - name: Test xonsh
         run: |
              which xonsh \
-             && cat $(which xonsh) \
              && xonsh --version \
              && xonsh -c 'xcontext'
 
@@ -69,7 +68,7 @@ jobs:
                   --include-package=pygments \
                   --include-package=prompt_toolkit \
                   --include-module=pyperclip \
-                  /home/runner/micromamba/lib/python$PYTHON_VER/site-packages/xonsh
+                  /opt/hostedtoolcache/Python/3.11.14/x64/lib/python$PYTHON_VER/site-packages/xonsh
 
       - name: nuitka-crash-report.xml
         run: |
