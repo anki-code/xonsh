@@ -28,7 +28,7 @@ jobs:
       - name: Install packages from apt
         run: |
           uname -a
-          sudo apt install -y curl git vim patchelf elfutils binutils-common binutils
+          sudo apt install -y curl git vim patchelf elfutils binutils-common binutils libffi-dev
 
       - name: Install mamba
         run: |
@@ -39,20 +39,20 @@ jobs:
         run: |
           eval "$(/home/runner/.local/bin/micromamba shell hook -s bash)" \
              && micromamba activate base \
-             && micromamba install -y -c conda-forge libpython-static==$PYTHON_VER gcc ccache \
+             && micromamba install -y -c conda-forge libpython-static==$PYTHON_VER gcc ccache libffi \
              && pip install -U pip setuptools wheel certifi \
              && pip install '.[full]' ujson pygments prompt_toolkit pyperclip \
              && pip install xontrib-sh xontrib-prompt-starship \
              && pip install git+https://github.com/Nuitka/Nuitka@factory
 
-      - name: Activate mamba and test xonsh
+      - name: Test xonsh
         run: |
           eval "$(/home/runner/.local/bin/micromamba shell hook -s bash)" \
              && micromamba activate base \
              && xonsh --version \
              && xonsh -c '21+21'
 
-      - name: Activate mamba and run Nuitka build
+      - name: Nuitka build
         continue-on-error: true
         run: |
           eval "$(/home/runner/.local/bin/micromamba shell hook -s bash)" \
@@ -80,7 +80,7 @@ jobs:
                   --include-module=pyperclip \
                   /home/runner/micromamba/lib/python$PYTHON_VER/site-packages/xonsh
 
-      - name: Show Nuitka crash report if exists
+      - name: nuitka-crash-report.xml
         run: |
           [ -f nuitka-crash-report.xml ] && cat nuitka-crash-report.xml
 
