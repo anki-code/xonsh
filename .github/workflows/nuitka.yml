@@ -41,6 +41,7 @@ jobs:
       - name: Test xonsh
         run: |
              which xonsh \
+             && cat $(which xonsh) \
              && xonsh --version \
              && xonsh -c 'xcontext'
 
