@@ -74,6 +74,7 @@ jobs:
                   /opt/hostedtoolcache/Python/3.11.14/x64/lib/python$PYTHON_VER/site-packages/xonsh
 
       - name: nuitka-crash-report.xml
+        continue-on-error: true
         run: |
           [ -f nuitka-crash-report.xml ] && cat nuitka-crash-report.xml
 
@@ -81,7 +82,6 @@ jobs:
         run: |
           ls -lah xonsh.bin
           ./xonsh.bin --version
-          mv xonsh.bin xonsh-py$PYTHON_VER-glibc-$(uname -m).bin
 
       - name: Get latest release upload URL
         id: get_release
@@ -95,12 +95,12 @@ jobs:
             core.setOutput('upload_url', release.upload_url);
             core.setOutput('tag_name', release.tag_name);
 
-      - name: Upload xonsh AppImage to latest release
+      - name: Upload xonsh binary Nuitka to latest release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.get_release.outputs.upload_url }}
-          asset_path: ./xonsh-x86_64.AppImage
-          asset_name: xonsh-x86_64.AppImage
+          asset_path: ./xonsh.bin
+          asset_name: xonsh.bin
           asset_content_type: application/x-executable

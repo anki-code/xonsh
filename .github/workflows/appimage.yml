@@ -78,9 +78,13 @@ jobs:
                   --include-package=pygments \
                   --include-package=prompt_toolkit \
                   --include-module=pyperclip \
+                  --include-module=ctypes \
+                  --include-package=ctypes \
+                  --nofollow-import-to=xonsh.platform \
                   /home/runner/micromamba/lib/python$PYTHON_VER/site-packages/xonsh
 
       - name: nuitka-crash-report.xml
+        continue-on-error: true
         run: |
           [ -f nuitka-crash-report.xml ] && cat nuitka-crash-report.xml
 
@@ -88,7 +92,7 @@ jobs:
         run: |
           ls -lah xonsh.bin
           ./xonsh.bin --version
-          mv xonsh.bin xonsh-py$PYTHON_VER-glibc-$(uname -m).bin
+          mv xonsh.bin xonsh-mamba.bin
 
       - name: Get latest release upload URL
         id: get_release
@@ -102,12 +106,12 @@ jobs:
             core.setOutput('upload_url', release.upload_url);
             core.setOutput('tag_name', release.tag_name);
 
-      - name: Upload xonsh AppImage to latest release
+      - name: Upload xonsh mamba Nuitka to latest release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.get_release.outputs.upload_url }}
-          asset_path: ./xonsh-x86_64.AppImage
-          asset_name: xonsh-x86_64.AppImage
+          asset_path: ./xonsh-mamba.bin
+          asset_name: xonsh-mamba.bin
           asset_content_type: application/x-executable
