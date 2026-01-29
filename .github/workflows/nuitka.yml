@@ -8,7 +8,7 @@ on:
 jobs:
   xonsh-binary-nuitka:
     if: github.repository_owner == 'anki-code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
 
