@@ -40,7 +40,7 @@ jobs:
 
       - name: Test xonsh
         run: |
-             which xonsh
+             which xonsh \
              && xonsh --version \
              && xonsh -c 'xcontext'
 
