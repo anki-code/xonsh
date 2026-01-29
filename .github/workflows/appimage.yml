@@ -26,7 +26,7 @@ jobs:
         run: |
           uname
           uname -a
-          apt update && apt install -y curl git vim patchelf elfutils binutils-common binutils
+          sudo apt install -y curl git vim patchelf elfutils binutils-common binutils
 
       - name: create requirements.txt
         run: |
