@@ -22,16 +22,15 @@ jobs:
           cache: 'pip'
           cache-dependency-path: 'pyproject.toml'
 
-      - name: install
+      - name: Install packages from apt
         run: |
-          uname
           uname -a
           sudo apt install -y curl git vim patchelf elfutils binutils-common binutils
 
-      - name: create requirements.txt
+      - name: Install mamba
         run: |
-          echo $PWD > ./appimage/requirements.txt
-          cat ./appimage/pre-requirements.txt >> ./appimage/requirements.txt
+          yes | bash -c "$(curl -L https://micro.mamba.pm/install.sh)"
+          /root/.local/bin/micromamba info
 
       - name: build xonsh AppImage
         run: |
