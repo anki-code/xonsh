@@ -1,56 +1,113 @@
-# -*- coding: utf-8 -*-
 """Aliases for the xonsh shell."""
-import os
-import re
-import sys
-import inspect
-import argparse
-import builtins
-import collections.abc as cabc
 
-from xonsh.lazyasd import lazyobject
-from xonsh.dirstack import cd, pushd, popd, dirs, _get_cwd
-from xonsh.environ import locate_binary, make_args_env
-from xonsh.foreign_shells import foreign_shell_data
-from xonsh.jobs import jobs, fg, bg, clean_jobs, disown
-from xonsh.platform import (
-    ON_ANACONDA,
-    ON_DARWIN,
-    ON_WINDOWS,
-    ON_FREEBSD,
-    ON_NETBSD,
-    ON_OPENBSD,
-    ON_DRAGONFLY,
-    ON_POSIX,
-    IN_APPIMAGE,
-)
-from xonsh.tools import (
-    XonshError,
-    argvquote,
-    escape_windows_cmd_string,
-    to_bool,
-    swap_values,
-    strip_simple_quotes,
-    ALIAS_KWARG_NAMES,
-    unthreadable,
-    print_color,
-)
-from xonsh.timings import timeit_alias
-from xonsh.xontribs import xontribs_main
-from xonsh.ast import isexpression
+import argparse
+import functools
+import inspect
+import operator
+import os
+import pathlib
+import re
+import shlex
+import shutil
+import sys
+import types
+import typing as tp
+from collections import abc as cabc
+from pathlib import Path
+from typing import Literal
 
 import xonsh.completers._aliases as xca
 import xonsh.history.main as xhm
 import xonsh.xoreutils.which as xxw
-from xonsh.xoreutils.umask import umask
-
-if ON_POSIX:
-    from xonsh.xoreutils.ulimit import ulimit
+import xonsh.xoreutils.xcontext as xxt
+from xonsh.built_ins import XSH
+from xonsh.cli_utils import Annotated, Arg, ArgParserAlias
+from xonsh.dirstack import _get_cwd, cd, dirs, popd, pushd
+from xonsh.environ import locate_binary, make_args_env
+from xonsh.foreign_shells import foreign_shell_data
+from xonsh.lib.lazyasd import lazyobject
+from xonsh.parsers.ast import isexpression
+from xonsh.platform import (
+    IN_APPIMAGE,
+    ON_ANACONDA,
+    ON_DARWIN,
+    ON_DRAGONFLY,
+    ON_FREEBSD,
+    ON_NETBSD,
+    ON_OPENBSD,
+    ON_WINDOWS,
+)
+from xonsh.procs.executables import locate_file
+from xonsh.procs.jobs import bg, clean_jobs, disown, fg, jobs
+from xonsh.procs.specs import DecoratorAlias, SpecAttrDecoratorAlias
+from xonsh.timings import timeit_alias
+from xonsh.tools import (
+    ALIAS_KWARG_NAMES,
+    XonshError,
+    adjust_shlvl,
+    argvquote,
+    escape_windows_cmd_string,
+    print_color,
+    print_exception,
+    strip_simple_quotes,
+    swap_values,
+    to_repr_pretty_,
+    to_shlvl,
+    unthreadable,
+)
+from xonsh.xontribs import xontribs_main
 
 
 @lazyobject
 def EXEC_ALIAS_RE():
     return re.compile(r"@\(|\$\(|!\(|\$\[|!\[|\&\&|\|\||\s+and\s+|\s+or\s+|[>|<]")
+
+
+class FuncAlias:
+    """Provides a callable alias for xonsh commands."""
+
+    attributes_show = ["__xonsh_threadable__", "__xonsh_capturable__", "return_what"]
+    attributes_inherit = attributes_show + ["__doc__"]
+    return_what: Literal["command", "result"] = "result"
+
+    def __init__(self, name, func=None):
+        self.__name__ = self.name = name
+        self.func = func
+        for attr in self.attributes_inherit:
+            if (val := getattr(func, attr, None)) is not None:
+                self.__setattr__(attr, val)
+
+    def __repr__(self):
+        r = {"name": self.name, "func": self.func.__name__}
+        r |= {
+            attr: val
+            for attr in self.attributes_show
+            if (val := getattr(self, attr, None)) is not None
+        }
+        return f"FuncAlias({repr(r)})"
+
+    def __call__(
+        self,
+        args=None,
+        stdin=None,
+        stdout=None,
+        stderr=None,
+        spec=None,
+        stack=None,
+        decorators=None,
+    ):
+        return run_alias_by_params(
+            self.func,
+            {
+                "args": args,
+                "stdin": stdin,
+                "stdout": stdout,
+                "stderr": stderr,
+                "spec": spec,
+                "stack": stack,
+                "decorators": decorators,
+            },
+        )
 
 
 class Aliases(cabc.MutableMapping):
@@ -60,24 +117,56 @@ class Aliases(cabc.MutableMapping):
         self._raw = {}
         self.update(*args, **kwargs)
 
-    def get(self, key, default=None):
-        """Returns the (possibly modified) value. If the key is not present,
-        then `default` is returned.
-        If the value is callable, it is returned without modification. If it
-        is an iterable of strings it will be evaluated recursively to expand
-        other aliases, resulting in a new list or a "partially applied"
-        callable.
-        """
-        val = self._raw.get(key)
-        if val is None:
-            return default
-        elif isinstance(val, cabc.Iterable) or callable(val):
-            return self.eval_alias(val, seen_tokens={key})
-        else:
-            msg = "alias of {!r} has an inappropriate type: {!r}"
-            raise TypeError(msg.format(key, val))
+    @staticmethod
+    def _get_func_name(func):
+        name = func.__name__
 
-    def eval_alias(self, value, seen_tokens=frozenset(), acc_args=()):
+        # Strip leading underscore
+        if name.startswith("_"):
+            name = name[1:]
+        return name
+
+    def _register(self, func, name="", dash_case=True):
+        name = name or self._get_func_name(func)
+
+        if dash_case:
+            name = name.replace("_", "-")
+
+        self[name] = func
+        return func
+
+    @tp.overload
+    def register(self, func: types.FunctionType) -> types.FunctionType:
+        """simple usage"""
+
+    @tp.overload
+    def register(
+        self, name: str, *, dash_case: bool = True
+    ) -> tp.Callable[[types.FunctionType], types.FunctionType]: ...
+
+    def register(self, func_or_name, name=None, dash_case=True):
+        """Decorator to register the given function by name."""
+
+        if isinstance(func_or_name, types.FunctionType):
+            return self._register(func_or_name, name, dash_case)
+
+        def wrapper(func):
+            return self._register(func, func_or_name, dash_case)
+
+        return wrapper
+
+    def return_command(self, f):
+        """Decorator that switches alias from returning result to return in new command for execution."""
+        f.return_what = "command"
+        return f
+
+    def eval_alias(
+        self,
+        value,
+        seen_tokens=frozenset(),
+        acc_args=(),
+        decorators=None,
+    ):
         """
         "Evaluates" the alias ``value``, by recursively looking up the leftmost
         token and "expanding" if it's also an alias.
@@ -88,12 +177,37 @@ class Aliases(cabc.MutableMapping):
         callable.  The resulting callable will be "partially applied" with
         ``["-al", "arg"]``.
         """
+        decorators = decorators if decorators is not None else []
         # Beware of mutability: default values for keyword args are evaluated
         # only once.
+        if (
+            isinstance(value, cabc.Iterable)
+            and hasattr(value, "__len__")
+            and len(value) > 1
+        ):
+            i = 0
+            for v in value:
+                if isinstance(mod := self._raw.get(str(v)), DecoratorAlias):
+                    decorators.append(mod)
+                    i += 1
+                else:
+                    break
+            value = value[i:]
+
+        if callable(value) and getattr(value, "return_what", "result") == "command":
+            try:
+                value = value(acc_args, decorators=decorators)
+                acc_args = []
+            except Exception as e:
+                print_exception(f"Exception inside alias {value}: {e}")
+                return None
+            if not len(value):
+                raise ValueError("return_command alias: zero arguments.")
+
         if callable(value):
-            return partial_eval_alias(value, acc_args=acc_args)
+            return [value] + list(acc_args)
         else:
-            expand_path = builtins.__xonsh__.expand_path
+            expand_path = XSH.expand_path
             token, *rest = map(expand_path, value)
             if token in seen_tokens or token not in self._raw:
                 # ^ Making sure things like `egrep=egrep --color=auto` works,
@@ -106,17 +220,74 @@ class Aliases(cabc.MutableMapping):
             else:
                 seen_tokens = seen_tokens | {token}
                 acc_args = rest + list(acc_args)
-                return self.eval_alias(self._raw[token], seen_tokens, acc_args)
+                return self.eval_alias(
+                    self._raw[token],
+                    seen_tokens,
+                    acc_args,
+                    decorators=decorators,
+                )
 
-    def expand_alias(self, line):
+    def get(
+        self,
+        key,
+        default=None,
+        decorators=None,
+    ):
+        """
+        Returns list that represent command with resolved aliases.
+        The ``key`` can be string with alias name or list for a command.
+        In the first position will be the resolved command name or callable alias.
+        If the key is not present, then `default` is returned.
+
+        ``decorators`` is the list of `DecoratorAlias` objects that found during
+        resolving aliases (#5443).
+
+        Note! The return value is always list because during resolving
+        we can find return_command alias that can completely replace
+        command and add new arguments.
+        """
+        decorators = decorators if decorators is not None else []
+        args = []
+        if isinstance(key, list):
+            args = key[1:]
+            key = key[0]
+        val = self._raw.get(key)
+        if callable(val) and getattr(val, "return_what", "result") == "command":
+            try:
+                val = val(args, decorators=decorators)
+                args = []
+            except Exception as e:
+                print_exception(f"Exception inside alias {key!r}: {e}")
+                return None
+            if not len(val):
+                raise ValueError("return_command alias: zero arguments.")
+
+        if val is None:
+            return default
+        elif isinstance(val, cabc.Iterable) or callable(val):
+            return self.eval_alias(
+                val,
+                seen_tokens={key},
+                decorators=decorators,
+                acc_args=args,
+            )
+        else:
+            msg = "alias of {!r} has an inappropriate type: {!r}"
+            raise TypeError(msg.format(key, val))
+
+    def expand_alias(self, line: str, cursor_index: int) -> str:
         """Expands any aliases present in line if alias does not point to a
         builtin function and if alias is only a single command.
+        The command won't be expanded if the cursor's inside/behind it.
         """
-        word = line.split(" ", 1)[0]
-        if word in builtins.aliases and isinstance(self.get(word), cabc.Sequence):
+        word = (line.split(maxsplit=1) or [""])[0]
+        if word in self and not callable(self.get(word)[0]):  # type: ignore
             word_idx = line.find(word)
-            expansion = " ".join(self.get(word))
-            line = line[:word_idx] + expansion + line[word_idx + len(word) :]
+            word_edge = word_idx + len(word)
+            if cursor_index > word_edge:
+                # the cursor isn't inside/behind the word
+                expansion = " ".join(self.get(word))
+                line = line[:word_idx] + expansion + line[word_edge:]
         return line
 
     #
@@ -134,11 +305,13 @@ class Aliases(cabc.MutableMapping):
                 self._raw[key] = ExecAlias(val, filename=f)
             elif isexpression(val):
                 # expansion substitution
-                lexer = builtins.__xonsh__.execer.parser.lexer
+                lexer = XSH.execer.parser.lexer
                 self._raw[key] = list(map(strip_simple_quotes, lexer.split(val)))
             else:
                 # need to exec alias
                 self._raw[key] = ExecAlias(val, filename=f)
+        elif isinstance(val, types.FunctionType):
+            self._raw[key] = FuncAlias(key, val)
         else:
             self._raw[key] = val
 
@@ -176,22 +349,13 @@ class Aliases(cabc.MutableMapping):
         return str(self._raw)
 
     def __repr__(self):
-        return "{0}.{1}({2})".format(
-            self.__class__.__module__, self.__class__.__name__, self._raw
-        )
+        return f"{self.__class__.__module__}.{self.__class__.__name__}({self._raw})"
 
-    def _repr_pretty_(self, p, cycle):
-        name = "{0}.{1}".format(self.__class__.__module__, self.__class__.__name__)
-        with p.group(0, name + "(", ")"):
-            if cycle:
-                p.text("...")
-            elif len(self):
-                p.break_()
-                p.pretty(dict(self))
+    _repr_pretty_ = to_repr_pretty_
 
 
 class ExecAlias:
-    """Provides a callable alias for xonsh source code."""
+    """Provides an exec alias for xonsh source code."""
 
     def __init__(self, src, filename="<exec-alias>"):
         """
@@ -206,14 +370,25 @@ class ExecAlias:
     def __call__(
         self, args, stdin=None, stdout=None, stderr=None, spec=None, stack=None
     ):
-        execer = builtins.__xonsh__.execer
+        execer = XSH.execer
         frame = stack[0][0]  # execute as though we are at the call site
-        execer.exec(
-            self.src, glbs=frame.f_globals, locs=frame.f_locals, filename=self.filename
-        )
+
+        alias_args = {"args": args}
+        for i, a in enumerate(args):
+            alias_args[f"arg{i}"] = a
+
+        with XSH.env.swap(alias_args):
+            execer.exec(
+                self.src,
+                glbs=frame.f_globals,
+                locs=frame.f_locals,
+                filename=self.filename,
+            )
+        if XSH.history is not None:
+            return XSH.history.last_cmd_rtn
 
     def __repr__(self):
-        return "ExecAlias({0!r}, filename={1!r})".format(self.src, self.filename)
+        return f"ExecAlias({self.src!r}, filename={self.filename!r})"
 
 
 class PartialEvalAliasBase:
@@ -240,9 +415,7 @@ class PartialEvalAliasBase:
         return self.f(args, stdin, stdout, stderr, spec, stack)
 
     def __repr__(self):
-        return "{name}({f!r}, acc_args={acc_args!r})".format(
-            name=self.__class__.__name__, f=self.f, acc_args=self.acc_args
-        )
+        return f"{self.__class__.__name__}({self.f!r}, acc_args={self.acc_args!r})"
 
 
 class PartialEvalAlias0(PartialEvalAliasBase):
@@ -305,6 +478,21 @@ class PartialEvalAlias6(PartialEvalAliasBase):
         return self.f(args, stdin, stdout, stderr, spec, stack)
 
 
+class PartialEvalAlias7(PartialEvalAliasBase):
+    def __call__(
+        self,
+        args,
+        stdin=None,
+        stdout=None,
+        stderr=None,
+        spec=None,
+        stack=None,
+        decorators=None,
+    ):
+        args = list(self.acc_args) + args
+        return self.f(args, stdin, stdout, stderr, spec, stack, decorators)
+
+
 PARTIAL_EVAL_ALIASES = (
     PartialEvalAlias0,
     PartialEvalAlias1,
@@ -313,6 +501,7 @@ PARTIAL_EVAL_ALIASES = (
     PartialEvalAlias4,
     PartialEvalAlias5,
     PartialEvalAlias6,
+    PartialEvalAlias7,
 )
 
 
@@ -333,11 +522,45 @@ def partial_eval_alias(f, acc_args=()):
             numargs += 1
         elif name in ALIAS_KWARG_NAMES and param.kind == param.KEYWORD_ONLY:
             numargs += 1
-    if numargs < 7:
+    if numargs < 8:
         return PARTIAL_EVAL_ALIASES[numargs](f, acc_args=acc_args)
     else:
-        e = "Expected proxy with 6 or fewer arguments for {}, not {}"
+        e = "Expected proxy with 7 or fewer arguments for {}, not {}"
         raise XonshError(e.format(", ".join(ALIAS_KWARG_NAMES), numargs))
+
+
+def run_alias_by_params(func: tp.Callable, params: dict[str, tp.Any]):
+    """
+    Run alias function based on signature and params.
+    If function param names are in alias signature fill them.
+    If function params have unknown names fill using alias signature order.
+    """
+    alias_params = {
+        "args": None,
+        "stdin": None,
+        "stdout": None,
+        "stderr": None,
+        "spec": None,
+        "stack": None,
+        "decorators": None,
+    }
+    alias_params |= params
+    sign = inspect.signature(func)
+    func_params = sign.parameters.items()
+    kwargs = {
+        name: alias_params[name] for name, p in func_params if name in alias_params
+    }
+
+    if len(kwargs) != len(func_params):
+        # There is unknown param. Switch to positional mode.
+        kwargs = dict(
+            zip(
+                map(operator.itemgetter(0), func_params),
+                alias_params.values(),
+                strict=False,
+            )
+        )
+    return func(**kwargs)
 
 
 #
@@ -350,188 +573,146 @@ def xonsh_exit(args, stdin=None):
     if not clean_jobs():
         # Do not exit if jobs not cleaned up
         return None, None
-    builtins.__xonsh__.exit = True
+    if args:
+        try:
+            code = int(args[0])
+        except ValueError:
+            code = 1
+    else:
+        code = 0
+    XSH.exit = code
     print()  # gimme a newline
     return None, None
 
 
 def xonsh_reset(args, stdin=None):
-    """ Clears __xonsh__.ctx"""
-    builtins.__xonsh__.ctx.clear()
+    """Clears __xonsh__.ctx"""
+    XSH.ctx.clear()
 
 
-@lazyobject
-def _SOURCE_FOREIGN_PARSER():
-    desc = "Sources a file written in a foreign shell language."
-    parser = argparse.ArgumentParser("source-foreign", description=desc)
-    parser.add_argument("shell", help="Name or path to the foreign shell")
-    parser.add_argument(
-        "files_or_code",
-        nargs="+",
-        help="file paths to source or code in the target " "language.",
-    )
-    parser.add_argument(
-        "-i",
-        "--interactive",
-        type=to_bool,
-        default=True,
-        help="whether the sourced shell should be interactive",
-        dest="interactive",
-    )
-    parser.add_argument(
-        "-l",
-        "--login",
-        type=to_bool,
-        default=False,
-        help="whether the sourced shell should be login",
-        dest="login",
-    )
-    parser.add_argument(
-        "--envcmd", default=None, dest="envcmd", help="command to print environment"
-    )
-    parser.add_argument(
-        "--aliascmd", default=None, dest="aliascmd", help="command to print aliases"
-    )
-    parser.add_argument(
-        "--extra-args",
-        default=(),
-        dest="extra_args",
-        type=(lambda s: tuple(s.split())),
-        help="extra arguments needed to run the shell",
-    )
-    parser.add_argument(
-        "-s",
-        "--safe",
-        type=to_bool,
-        default=True,
-        help="whether the source shell should be run safely, "
-        "and not raise any errors, even if they occur.",
-        dest="safe",
-    )
-    parser.add_argument(
-        "-p",
-        "--prevcmd",
-        default=None,
-        dest="prevcmd",
-        help="command(s) to run before any other commands, "
-        "replaces traditional source.",
-    )
-    parser.add_argument(
-        "--postcmd",
-        default="",
-        dest="postcmd",
-        help="command(s) to run after all other commands",
-    )
-    parser.add_argument(
-        "--funcscmd",
-        default=None,
-        dest="funcscmd",
-        help="code to find locations of all native functions " "in the shell language.",
-    )
-    parser.add_argument(
-        "--sourcer",
-        default=None,
-        dest="sourcer",
-        help="the source command in the target shell " "language, default: source.",
-    )
-    parser.add_argument(
-        "--use-tmpfile",
-        type=to_bool,
-        default=False,
-        help="whether the commands for source shell should be "
-        "written to a temporary file.",
-        dest="use_tmpfile",
-    )
-    parser.add_argument(
-        "--seterrprevcmd",
-        default=None,
-        dest="seterrprevcmd",
-        help="command(s) to set exit-on-error before any" "other commands.",
-    )
-    parser.add_argument(
-        "--seterrpostcmd",
-        default=None,
-        dest="seterrpostcmd",
-        help="command(s) to set exit-on-error after all" "other commands.",
-    )
-    parser.add_argument(
-        "--overwrite-aliases",
-        default=False,
-        action="store_true",
-        dest="overwrite_aliases",
-        help="flag for whether or not sourced aliases should "
-        "replace the current xonsh aliases.",
-    )
-    parser.add_argument(
-        "--suppress-skip-message",
-        default=None,
-        action="store_true",
-        dest="suppress_skip_message",
-        help="flag for whether or not skip messages should be suppressed.",
-    )
-    parser.add_argument(
-        "--show",
-        default=False,
-        action="store_true",
-        dest="show",
-        help="Will show the script output.",
-    )
-    parser.add_argument(
-        "-d",
-        "--dry-run",
-        default=False,
-        action="store_true",
-        dest="dryrun",
-        help="Will not actually source the file.",
-    )
-    return parser
+def source_foreign_fn(
+    shell: str,
+    files_or_code: Annotated[list[str], Arg(nargs="+")],
+    interactive=False,
+    login=False,
+    envcmd=None,
+    aliascmd=None,
+    extra_args="",
+    safe=True,
+    prevcmd="",
+    postcmd="",
+    funcscmd="",
+    sourcer=None,
+    use_tmpfile=False,
+    seterrprevcmd=None,
+    seterrpostcmd=None,
+    overwrite_aliases=False,
+    suppress_skip_message=False,
+    show=False,
+    dryrun=False,
+    _stderr=None,
+):
+    """Sources a file written in a foreign shell language.
 
-
-def source_foreign(args, stdin=None, stdout=None, stderr=None):
-    """Sources a file written in a foreign shell language."""
-    env = builtins.__xonsh__.env
-    ns = _SOURCE_FOREIGN_PARSER.parse_args(args)
-    ns.suppress_skip_message = (
+    Parameters
+    ----------
+    shell
+        Name or path to the foreign shell
+    files_or_code
+        file paths to source or code in the target language.
+    interactive : -i, --interactive
+        whether the sourced shell should be interactive
+    login : -l, --login
+        whether the sourced shell should be login
+    envcmd : --envcmd
+        command to print environment
+    aliascmd : --aliascmd
+        command to print aliases
+    extra_args : --extra-args
+        extra arguments needed to run the shell
+    safe : -u, --unsafe
+        whether the source shell should be run safely, and not raise any errors, even if they occur.
+    prevcmd : -p, --prevcmd
+        command(s) to run before any other commands, replaces traditional source.
+    postcmd : --postcmd
+        command(s) to run after all other commands
+    funcscmd : --funcscmd
+        code to find locations of all native functions in the shell language.
+    sourcer : --sourcer
+        the source command in the target shell language.
+        If this is not set, a default value will attempt to be
+        looked up based on the shell name.
+    use_tmpfile : --use-tmpfile
+        whether the commands for source shell should be written to a temporary file.
+    seterrprevcmd : --seterrprevcmd
+        command(s) to set exit-on-error before any other commands.
+    seterrpostcmd : --seterrpostcmd
+        command(s) to set exit-on-error after all other commands.
+    overwrite_aliases : --overwrite-aliases
+        flag for whether or not sourced aliases should replace the current xonsh aliases.
+    suppress_skip_message : --suppress-skip-message
+        flag for whether or not skip messages should be suppressed.
+    show : --show
+        show the script output.
+    dryrun : -d, --dry-run
+        Will not actually source the file.
+    """
+    extra_args = tuple(extra_args.split())
+    env = XSH.env
+    suppress_skip_message = (
         env.get("FOREIGN_ALIASES_SUPPRESS_SKIP_MESSAGE")
-        if ns.suppress_skip_message is None
-        else ns.suppress_skip_message
+        if not suppress_skip_message
+        else suppress_skip_message
     )
-    if ns.prevcmd is not None:
+    files: tuple[str, ...] = ()
+    if prevcmd:
         pass  # don't change prevcmd if given explicitly
-    elif os.path.isfile(ns.files_or_code[0]):
-        # we have filename to source
-        ns.prevcmd = '{} "{}"'.format(ns.sourcer, '" "'.join(ns.files_or_code))
-    elif ns.prevcmd is None:
-        ns.prevcmd = " ".join(ns.files_or_code)  # code to run, no files
+    elif os.path.isfile(files_or_code[0]):
+        if not sourcer:
+            return (None, "xonsh: error: `sourcer` command is not mentioned.\n", 1)
+        # we have filenames to source
+        shell_name = os.path.basename(shell).lower()
+        quote = (
+            functools.partial(argvquote, force=True)
+            if shell_name in {"cmd", "cmd.exe"}
+            else shlex.quote
+        )
+        prevcmd = "".join(f"{sourcer} {quote(f)}\n" for f in files_or_code)
+        files = tuple(files_or_code)
+    elif not prevcmd:
+        prevcmd = " ".join(files_or_code)  # code to run, no files
     foreign_shell_data.cache_clear()  # make sure that we don't get prev src
     fsenv, fsaliases = foreign_shell_data(
-        shell=ns.shell,
-        login=ns.login,
-        interactive=ns.interactive,
-        envcmd=ns.envcmd,
-        aliascmd=ns.aliascmd,
-        extra_args=ns.extra_args,
-        safe=ns.safe,
-        prevcmd=ns.prevcmd,
-        postcmd=ns.postcmd,
-        funcscmd=ns.funcscmd,
-        sourcer=ns.sourcer,
-        use_tmpfile=ns.use_tmpfile,
-        seterrprevcmd=ns.seterrprevcmd,
-        seterrpostcmd=ns.seterrpostcmd,
-        show=ns.show,
-        dryrun=ns.dryrun,
+        shell=shell,
+        login=login,
+        interactive=interactive,
+        envcmd=envcmd,
+        aliascmd=aliascmd,
+        extra_args=extra_args,
+        safe=safe,
+        prevcmd=prevcmd,
+        postcmd=postcmd,
+        funcscmd=funcscmd or None,  # the default is None in the called function
+        sourcer=sourcer,
+        use_tmpfile=use_tmpfile,
+        seterrprevcmd=seterrprevcmd,
+        seterrpostcmd=seterrpostcmd,
+        show=show,
+        dryrun=dryrun,
+        files=files,
     )
     if fsenv is None:
-        if ns.dryrun:
+        if dryrun:
             return
         else:
-            msg = "xonsh: error: Source failed: {0!r}\n".format(ns.prevcmd)
+            msg = f"xonsh: error: Source failed: {prevcmd!r}\n"
             msg += "xonsh: error: Possible reasons: File not found or syntax error\n"
             return (None, msg, 1)
     # apply results
     denv = env.detype()
     for k, v in fsenv.items():
+        if k == "SHLVL":  # ignore $SHLVL as sourcing should not change $SHLVL
+            continue
         if k in denv and v == denv[k]:
             continue  # no change from original
         env[k] = v
@@ -540,114 +721,225 @@ def source_foreign(args, stdin=None, stdout=None, stderr=None):
         if k not in fsenv:
             env.pop(k, None)
     # Update aliases
-    baliases = builtins.aliases
+    baliases = XSH.aliases
     for k, v in fsaliases.items():
         if k in baliases and v == baliases[k]:
             continue  # no change from original
-        elif ns.overwrite_aliases or k not in baliases:
+        elif overwrite_aliases or k not in baliases:
             baliases[k] = v
-        elif ns.suppress_skip_message:
+        elif suppress_skip_message:
             pass
         else:
             msg = (
                 "Skipping application of {0!r} alias from {1!r} "
                 "since it shares a name with an existing xonsh alias. "
-                'Use "--overwrite-alias" option to apply it anyway.'
+                'Use "--overwrite-alias" option to apply it anyway. '
                 'You may prevent this message with "--suppress-skip-message" or '
                 '"$FOREIGN_ALIASES_SUPPRESS_SKIP_MESSAGE = True".'
             )
-            print(msg.format(k, ns.shell), file=stderr)
+            print(msg.format(k, shell), file=_stderr)
 
 
-@unthreadable
-def source_alias(args, stdin=None):
+class SourceForeignAlias(ArgParserAlias):
+    def build(self):
+        parser = self.create_parser(**self.kwargs)
+        # for backwards compatibility
+        parser.add_argument(
+            "-n",
+            "--non-interactive",
+            action="store_false",
+            dest="interactive",
+            help="Deprecated: The default mode runs in non-interactive mode.",
+        )
+        return parser
+
+
+source_foreign = SourceForeignAlias(
+    func=source_foreign_fn, has_args=True, prog="source-foreign"
+)
+
+
+def source_alias_fn(
+    files: Annotated[list[str], Arg(nargs="+")], ignore_ext=False, _stdin=None
+):
     """Executes the contents of the provided files in the current context.
     If sourced file isn't found in cwd, search for file along $PATH to source
     instead.
+
+    Parameters
+    ----------
+    files
+        paths to source files.
+    ignore_ext : -e, --ignore-ext
+        don't check the file extension
     """
-    env = builtins.__xonsh__.env
+    env = XSH.env
     encoding = env.get("XONSH_ENCODING")
     errors = env.get("XONSH_ENCODING_ERRORS")
-    for i, fname in enumerate(args):
+    for i, fname in enumerate(files):
         fpath = fname
         if not os.path.isfile(fpath):
-            fpath = locate_binary(fname)
+            fpath = locate_file(fname)
             if fpath is None:
                 if env.get("XONSH_DEBUG"):
-                    print("source: {}: No such file".format(fname), file=sys.stderr)
+                    print(f"source: {fname}: No such file", file=sys.stderr)
                 if i == 0:
                     raise RuntimeError(
                         "must source at least one file, " + fname + " does not exist."
                     )
                 break
         _, fext = os.path.splitext(fpath)
-        if fext and fext != ".xsh" and fext != ".py":
+        fext, name = Path(fpath).suffix, Path(fpath).name
+        if not fext and name.startswith("."):
+            fext = name  # hidden file with no extension
+        if not ignore_ext and fext not in {".xsh", ".py", ".xonshrc"}:
             raise RuntimeError(
-                "attempting to source non-xonsh file! If you are "
-                "trying to source a file in another language, "
-                "then please use the appropriate source command. "
-                "For example, source-bash script.sh"
+                f"attempting to source file with non-xonsh extension {repr(name)}! "
+                f"If you are trying to source a file in another language, "
+                "then please use the appropriate source command "
+                "e.g. `source-bash script.sh`. "
+                "Use `-e` to ignore extension checking and source the file."
             )
-        with open(fpath, "r", encoding=encoding, errors=errors) as fp:
+        with open(fpath, encoding=encoding, errors=errors) as fp:
             src = fp.read()
         if not src.endswith("\n"):
             src += "\n"
-        ctx = builtins.__xonsh__.ctx
+        ctx = XSH.ctx
         updates = {"__file__": fpath, "__name__": os.path.abspath(fpath)}
-        with env.swap(**make_args_env(args[i + 1 :])), swap_values(ctx, updates):
+        with (
+            env.swap(XONSH_MODE="source", **make_args_env(files[i + 1 :])),
+            swap_values(ctx, updates),
+        ):
             try:
-                builtins.execx(src, "exec", ctx, filename=fpath)
+                XSH.builtins.execx(src, "exec", ctx, filename=fpath)
             except Exception:
                 print_color(
                     "{RED}You may be attempting to source non-xonsh file! "
                     "{RESET}If you are trying to source a file in "
                     "another language, then please use the appropriate "
-                    "source command. For example, {GREEN}source-bash "
-                    "script.sh{RESET}",
+                    "source command. For example, {GREEN}`source-bash "
+                    "script.sh`{RESET}",
                     file=sys.stderr,
                 )
                 raise
 
 
-def source_cmd(args, stdin=None):
-    """Simple cmd.exe-specific wrapper around source-foreign."""
-    args = list(args)
+source_alias = ArgParserAlias(
+    func=source_alias_fn, has_args=True, prog="source", threadable=False
+)
+
+
+def source_cmd_fn(
+    files: Annotated[list[str], Arg(nargs="+")],
+    login=False,
+    aliascmd=None,
+    extra_args="",
+    safe=True,
+    postcmd="",
+    funcscmd="",
+    seterrprevcmd=None,
+    overwrite_aliases=False,
+    suppress_skip_message=False,
+    show=False,
+    dryrun=False,
+    _stderr=None,
+):
+    """
+        Source cmd.exe files
+
+    Parameters
+    ----------
+    files
+        paths to source files.
+    login : -l, --login
+        whether the sourced shell should be login
+    envcmd : --envcmd
+        command to print environment
+    aliascmd : --aliascmd
+        command to print aliases
+    extra_args : --extra-args
+        extra arguments needed to run the shell
+    safe : -s, --safe
+        whether the source shell should be run safely, and not raise any errors, even if they occur.
+    postcmd : --postcmd
+        command(s) to run after all other commands
+    funcscmd : --funcscmd
+        code to find locations of all native functions in the shell language.
+    seterrprevcmd : --seterrprevcmd
+        command(s) to set exit-on-error before any other commands.
+    overwrite_aliases : --overwrite-aliases
+        flag for whether or not sourced aliases should replace the current xonsh aliases.
+    suppress_skip_message : --suppress-skip-message
+        flag for whether or not skip messages should be suppressed.
+    show : --show
+        show the script output.
+    dryrun : -d, --dry-run
+        Will not actually source the file.
+    """
+    args = list(files)
     fpath = locate_binary(args[0])
     args[0] = fpath if fpath else args[0]
     if not os.path.isfile(args[0]):
-        return (None, "xonsh: error: File not found: {}\n".format(args[0]), 1)
+        return (None, f"xonsh: error: File not found: {args[0]}\n", 1)
     prevcmd = "call "
     prevcmd += " ".join([argvquote(arg, force=True) for arg in args])
     prevcmd = escape_windows_cmd_string(prevcmd)
-    args.append("--prevcmd={}".format(prevcmd))
-    args.insert(0, "cmd")
-    args.append("--interactive=0")
-    args.append("--sourcer=call")
-    args.append("--envcmd=set")
-    args.append("--seterrpostcmd=if errorlevel 1 exit 1")
-    args.append("--use-tmpfile=1")
-    with builtins.__xonsh__.env.swap(PROMPT="$P$G"):
-        return source_foreign(args, stdin=stdin)
+    with XSH.env.swap(PROMPT="$P$G"):
+        return source_foreign_fn(
+            shell="cmd",
+            files_or_code=args,
+            interactive=True,
+            sourcer="call",
+            envcmd="set",
+            seterrpostcmd="if errorlevel 1 exit 1",
+            use_tmpfile=True,
+            prevcmd=prevcmd,
+            #     from this function
+            login=login,
+            aliascmd=aliascmd,
+            extra_args=extra_args,
+            safe=safe,
+            postcmd=postcmd,
+            funcscmd=funcscmd,
+            seterrprevcmd=seterrprevcmd,
+            overwrite_aliases=overwrite_aliases,
+            suppress_skip_message=suppress_skip_message,
+            show=show,
+            dryrun=dryrun,
+        )
 
 
-def xexec(args, stdin=None):
-    """exec [-h|--help] [-cl] [-a name] command [args...]
+source_cmd = ArgParserAlias(func=source_cmd_fn, has_args=True, prog="source-cmd")
 
-    exec (also aliased as xexec) uses the os.execvpe() function to
-    replace the xonsh process with the specified program. This provides
-    the functionality of the bash 'exec' builtin::
+
+def xexec_fn(
+    command: Annotated[list[str], Arg(nargs=argparse.REMAINDER)],
+    login=False,
+    clean=False,
+    name="",
+    _stdin=None,
+):
+    """exec (also aliased as xexec) uses the os.execvpe() function to
+    replace the xonsh process with the specified program.
+
+    This provides the functionality of the bash 'exec' builtin::
 
         >>> exec bash -l -i
         bash $
 
-    The '-h' and '--help' options print this message and exit.
-    If the '-l' option is supplied, the shell places a dash at the
-    beginning of the zeroth argument passed to command to simulate login
-    shell.
-    The '-c' option causes command to be executed with an empty environment.
-    If '-a' is supplied, the shell passes name as the zeroth argument
-    to the executed command.
-
+    Parameters
+    ----------
+    command
+        program to launch along its arguments
+    login : -l, --login
+        the shell places a dash at the
+        beginning of the zeroth argument passed to command to simulate login
+        shell.
+    clean : -c, --clean
+        causes command to be executed with an empty environment.
+    name : -a, --name
+        the shell passes name as the zeroth argument
+        to the executed command.
 
     Notes
     -----
@@ -659,66 +951,43 @@ def xexec(args, stdin=None):
     explicitly with ![exec command]. For more details, please see
     http://xon.sh/faq.html#exec.
     """
-    if len(args) == 0:
-        return (None, "xonsh: exec: no args specified\n", 1)
-
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("-h", "--help", action="store_true")
-    parser.add_argument("-l", dest="login", action="store_true")
-    parser.add_argument("-c", dest="clean", action="store_true")
-    parser.add_argument("-a", dest="name", nargs="?")
-    parser.add_argument("command", nargs=argparse.REMAINDER)
-    args = parser.parse_args(args)
-
-    if args.help:
-        return inspect.getdoc(xexec)
-
-    if len(args.command) == 0:
+    if len(command) == 0:
         return (None, "xonsh: exec: no command specified\n", 1)
 
-    command = args.command[0]
-    if args.name is not None:
-        args.command[0] = args.name
-    if args.login:
-        args.command[0] = "-{}".format(args.command[0])
+    cmd = command[0]
+    if name:
+        command[0] = name
+    if login:
+        command[0] = f"-{command[0]}"
 
     denv = {}
-    if not args.clean:
-        denv = builtins.__xonsh__.env.detype()
+    if not clean:
+        denv = XSH.env.detype()
+
+        # decrement $SHLVL to mirror bash's behaviour
+        if "SHLVL" in denv:
+            old_shlvl = to_shlvl(denv["SHLVL"])
+            denv["SHLVL"] = str(adjust_shlvl(old_shlvl, -1))
 
     try:
-        os.execvpe(command, args.command, denv)
+        os.execvpe(cmd, command, denv)
     except FileNotFoundError as e:
         return (
             None,
-            "xonsh: exec: file not found: {}: {}"
-            "\n".format(e.args[1], args.command[0]),
+            f"xonsh: exec: file not found: {e.args[1]}: {command[0]}\n",
             1,
         )
 
 
-class AWitchAWitch(argparse.Action):
-    SUPPRESS = "==SUPPRESS=="
-
-    def __init__(
-        self, option_strings, version=None, dest=SUPPRESS, default=SUPPRESS, **kwargs
-    ):
-        super().__init__(
-            option_strings=option_strings, dest=dest, default=default, nargs=0, **kwargs
-        )
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        import webbrowser
-
-        webbrowser.open("https://github.com/xonsh/xonsh/commit/f49b400")
-        parser.exit()
+xexec = ArgParserAlias(func=xexec_fn, has_args=True, prog="xexec")
 
 
-def xonfig(args, stdin=None):
+@lazyobject
+def xonfig():
     """Runs the xonsh configuration utility."""
     from xonsh.xonfig import xonfig_main  # lazy import
 
-    return xonfig_main(args)
+    return xonfig_main
 
 
 @unthreadable
@@ -733,22 +1002,30 @@ def trace(args, stdin=None, stdout=None, stderr=None, spec=None):
 
 
 def showcmd(args, stdin=None):
-    """usage: showcmd [-h|--help|cmd args]
+    """usage: showcmd [-e|--expand-alias] [-h|--help] cmd
 
     Displays the command and arguments as a list of strings that xonsh would
     run in subprocess mode. This is useful for determining how xonsh evaluates
     your commands and arguments prior to running these commands.
 
     optional arguments:
+      -e, --expand-alias    expand alias
       -h, --help            show this help message and exit
 
-    Example:
-    -------
-      >>> showcmd echo $USER "can't" hear "the sea"
+    Examples
+    --------
+      @ showcmd echo $USER "can't" hear "the sea"
       ['echo', 'I', "can't", 'hear', 'the sea']
+
+      @ aliases['ali'] = 'echo 1'
+      @ showcmd -e ali 2
+      ['echo', '1', '2']
+
     """
     if len(args) == 0 or (len(args) == 1 and args[0] in {"-h", "--help"}):
         print(showcmd.__doc__.rstrip().replace("\n    ", "\n"))
+    elif args[0] in {"-e", "--expand-alias"}:
+        sys.displayhook(XSH.aliases.eval_alias(args[1:]))
     else:
         sys.displayhook(args)
 
@@ -766,16 +1043,37 @@ def detect_xpip_alias():
 
     basecmd = [sys.executable, "-m", "pip"]
     try:
-        if ON_WINDOWS or IN_APPIMAGE:
+        if ON_WINDOWS:
             # XXX: Does windows have an installation mode that requires UAC?
             return basecmd
+        elif IN_APPIMAGE:
+            # In AppImage `sys.executable` is equal to path to xonsh.AppImage file and the real python executable is in $_
+            return [
+                XSH.env.get("_", "APPIMAGE_PYTHON_EXECUTABLE_NOT_FOUND"),
+                "-m",
+                "pip",
+            ]
         elif not os.access(os.path.dirname(sys.executable), os.W_OK):
-            return ["sudo"] + basecmd
+            return (
+                sys.executable
+                + " -m pip @(['install', '--user'] + $args[1:] if $args and $args[0] == 'install' else $args)"
+            )
         else:
             return basecmd
     except Exception:
         # Something freaky happened, return something that'll probably work
         return basecmd
+
+
+def _find_cmd_exe() -> str:
+    """
+    Resolve the cmd.exe executable.
+
+    Avoids using COMSPEC in order to allow COMSPEC to be used to
+    indicate Xonsh (or other shell) as the default shell. (#5701)
+    """
+    canonical = pathlib.Path(os.environ["SystemRoot"], "System32", "cmd.exe")
+    return str(canonical) if canonical.is_file() else os.environ["COMSPEC"]
 
 
 def make_default_aliases():
@@ -795,26 +1093,41 @@ def make_default_aliases():
         "exec": xexec,
         "xexec": xexec,
         "source": source_alias,
-        "source-zsh": ["source-foreign", "zsh", "--sourcer=source"],
-        "source-bash": ["source-foreign", "bash", "--sourcer=source"],
+        "source-zsh": SourceForeignAlias(
+            func=functools.partial(source_foreign_fn, "zsh", sourcer="source"),
+            has_args=True,
+            prog="source-zsh",
+        ),
+        "source-bash": SourceForeignAlias(
+            func=functools.partial(source_foreign_fn, "bash", sourcer="source"),
+            has_args=True,
+            prog="source-bash",
+        ),
         "source-cmd": source_cmd,
         "source-foreign": source_foreign,
         "history": xhm.history_main,
         "trace": trace,
         "timeit": timeit_alias,
-        "umask": umask,
         "xonfig": xonfig,
-        "scp-resume": ["rsync", "--partial", "-h", "--progress", "--rsh=ssh"],
         "showcmd": showcmd,
-        "ipynb": ["jupyter", "notebook", "--no-browser"],
         "which": xxw.which,
+        "xcontext": xxt.xcontext,
         "xontrib": xontribs_main,
         "completer": xca.completer_alias,
         "xpip": detect_xpip_alias(),
-        "xonsh-reset": xonsh_reset,
+        "xpython": [XSH.env.get("_", sys.executable)]
+        if IN_APPIMAGE
+        else [sys.executable],
+        "xreset": xonsh_reset,
+        "@thread": SpecAttrDecoratorAlias(
+            {"threadable": True, "force_threadable": True},
+            "Mark current command as threadable.",
+        ),
+        "@unthread": SpecAttrDecoratorAlias(
+            {"threadable": False, "force_threadable": False},
+            "Mark current command as unthreadable.",
+        ),
     }
-    if ON_POSIX:
-        default_aliases["ulimit"] = ulimit
     if ON_WINDOWS:
         # Borrow builtin commands from cmd.exe.
         windows_cmd_aliases = {
@@ -837,7 +1150,7 @@ def make_default_aliases():
             "vol",
         }
         for alias in windows_cmd_aliases:
-            default_aliases[alias] = ["cmd", "/c", alias]
+            default_aliases[alias] = [_find_cmd_exe(), "/c", alias]
         default_aliases["call"] = ["source-cmd"]
         default_aliases["source-bat"] = ["source-cmd"]
         default_aliases["clear"] = "cls"
@@ -845,14 +1158,13 @@ def make_default_aliases():
             # Add aliases specific to the Anaconda python distribution.
             default_aliases["activate"] = ["source-cmd", "activate.bat"]
             default_aliases["deactivate"] = ["source-cmd", "deactivate.bat"]
-        if not locate_binary("sudo"):
-            import xonsh.winutils as winutils
+        if shutil.which("sudo", path=XSH.env.get_detyped("PATH")):
+            # XSH.commands_cache is not available during setup
+            import xonsh.platforms.winutils as winutils
 
             def sudo(args):
                 if len(args) < 1:
-                    print(
-                        "You need to provide an executable to run as " "Administrator."
-                    )
+                    print("You need to provide an executable to run as Administrator.")
                     return
                 cmd = args[0]
                 if locate_binary(cmd):

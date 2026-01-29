@@ -11,7 +11,7 @@ RELEASE = v0.1
 # Internal variables.
 PAPEROPT_a4     = -D latex_paper_size=a4
 PAPEROPT_letter = -D latex_paper_size=letter
-ALLSPHINXOPTS   = -d $(BUILDDIR)/doctrees $(PAPEROPT_$(PAPER)) $(SPHINXOPTS) .
+ALLSPHINXOPTS   = -T -v -d $(BUILDDIR)/doctrees $(PAPEROPT_$(PAPER)) $(SPHINXOPTS) .
 
 DOCREPONAME = xonsh-docs
 DOCREPOURL  = git@github.com:xonsh/xonsh-docs.git
@@ -34,6 +34,7 @@ help:
 
 clean:
 	-rm -rf $(BUILDDIR)/*
+	-rm -rf api/_autosummary/*
 
 html:
 	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) $(BUILDDIR)/html
@@ -129,6 +130,4 @@ push-root:
 	git push
 
 serve:
-	# run as `make serve`
-	# to not watch file changes, run as `make serve watch=no`
-	python serve_docs.py $(watch)
+	sphinx-autobuild . "$(BUILDDIR)"/html $(SPHINXOPTS) $(O)

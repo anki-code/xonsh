@@ -1,101 +1,112 @@
-# -*- coding: utf-8 -*-
 """Environment for the xonsh shell."""
-import os
-import re
-import sys
-import pprint
-import textwrap
-import locale
-import builtins
-import warnings
-import contextlib
+
 import collections.abc as cabc
-import subprocess
+import contextlib
+import inspect
+import locale
+import os
 import platform
+import pprint
+import re
+import subprocess
+import sys
+import textwrap
+import threading
 import typing as tp
+import warnings
+from collections import ChainMap
+from pathlib import Path
 
+import xonsh.prompt.base as prompt
 from xonsh import __version__ as XONSH_VERSION
-from xonsh.lazyasd import lazyobject, LazyBool
-from xonsh.codecache import run_script_with_cache
-from xonsh.dirstack import _get_cwd
-from xonsh.events import events
-from xonsh.platform import (
-    BASH_COMPLETIONS_DEFAULT,
-    DEFAULT_ENCODING,
-    PATH_DEFAULT,
-    ON_WINDOWS,
-    ON_LINUX,
-    ON_CYGWIN,
-    os_environ,
-)
-
-from xonsh.tools import (
-    always_true,
-    always_false,
-    detype,
-    ensure_string,
-    is_path,
-    str_to_path,
-    path_to_str,
-    is_env_path,
-    str_to_env_path,
-    env_path_to_str,
-    is_bool,
-    to_bool,
-    bool_to_str,
-    is_bool_or_none,
-    to_bool_or_none,
-    bool_or_none_to_str,
-    is_history_tuple,
-    to_history_tuple,
-    history_tuple_to_str,
-    is_float,
-    is_string,
-    is_string_or_callable,
-    is_completions_display_value,
-    to_completions_display_value,
-    is_completion_mode,
-    to_completion_mode,
-    is_string_set,
-    csv_to_set,
-    set_to_csv,
-    is_int,
-    is_bool_seq,
-    to_bool_or_int,
-    bool_or_int_to_str,
-    csv_to_bool_seq,
-    bool_seq_to_csv,
-    DefaultNotGiven,
-    print_exception,
-    intensify_colors_on_win_setter,
-    is_dynamic_cwd_width,
-    to_dynamic_cwd_tuple,
-    dynamic_cwd_tuple_to_str,
-    is_logfile_opt,
-    to_logfile_opt,
-    logfile_opt_to_str,
-    executables_in,
-    is_nonstring_seq_of_strings,
-    pathsep_to_upper_seq,
-    seq_to_upper_pathsep,
-    print_color,
-    is_history_backend,
-    to_itself,
-    swap_values,
-    ptk2_color_depth_setter,
-    is_str_str_dict,
-    to_str_str_dict,
-    dict_to_str,
-    to_int_or_none,
-    DefaultNotGivenType,
-)
 from xonsh.ansi_colors import (
     ansi_color_escape_code_to_name,
     ansi_color_name_to_escape_code,
     ansi_reverse_style,
     ansi_style_by_name,
 )
-import xonsh.prompt.base as prompt
+from xonsh.built_ins import XSH
+from xonsh.codecache import run_script_with_cache
+from xonsh.dirstack import _get_cwd
+from xonsh.events import events
+from xonsh.lib.lazyasd import LazyBool, lazyobject
+from xonsh.platform import (
+    BASH_COMPLETIONS_DEFAULT,
+    DEFAULT_ENCODING,
+    ON_CYGWIN,
+    ON_LINUX,
+    ON_WINDOWS,
+    PATH_DEFAULT,
+    os_environ,
+)
+from xonsh.tools import (
+    DefaultNotGiven,
+    DefaultNotGivenType,
+    EnvPath,
+    abs_path_to_str,
+    adjust_shlvl,
+    always_false,
+    always_true,
+    bool_or_int_to_str,
+    bool_or_none_to_str,
+    bool_to_str,
+    csv_to_set,
+    detype,
+    dict_to_str,
+    dynamic_cwd_tuple_to_str,
+    ensure_string,
+    env_path_to_str,
+    history_tuple_to_str,
+    intensify_colors_on_win_setter,
+    is_bool,
+    is_bool_or_int,
+    is_bool_or_none,
+    is_completion_mode,
+    is_completions_display_value,
+    is_dynamic_cwd_width,
+    is_env_path,
+    is_float,
+    is_history_backend,
+    is_history_tuple,
+    is_int,
+    is_logfile_opt,
+    is_nonstring_seq_of_strings,
+    is_path,
+    is_regex,
+    is_string,
+    is_string_or_callable,
+    is_string_set,
+    is_tok_color_dict,
+    is_valid_shlvl,
+    logfile_opt_to_str,
+    path_to_str,
+    pathsep_to_upper_seq,
+    print_color,
+    print_exception,
+    print_warning,
+    ptk2_color_depth_setter,
+    seq_to_upper_pathsep,
+    set_to_csv,
+    str_to_abs_path,
+    str_to_env_path,
+    str_to_path,
+    swap_values,
+    to_bool,
+    to_bool_or_int,
+    to_bool_or_none,
+    to_completion_mode,
+    to_completions_display_value,
+    to_dynamic_cwd_tuple,
+    to_history_tuple,
+    to_int_or_none,
+    to_itself,
+    to_logfile_opt,
+    to_ptk_cursor_shape,
+    to_ptk_cursor_shape_display_value,
+    to_repr_pretty_,
+    to_shlvl,
+    to_tok_color_dict,
+)
 
 events.doc(
     "on_envvar_new",
@@ -108,7 +119,6 @@ cause a recursion until the limit.
 """,
 )
 
-
 events.doc(
     "on_envvar_change",
     """
@@ -120,7 +130,6 @@ cause a recursion until the limit.
 """,
 )
 
-
 events.doc(
     "on_pre_spec_run_ls",
     """
@@ -130,7 +139,6 @@ Fires right before a SubprocSpec.run() is called for the ls
 command.
 """,
 )
-
 
 events.doc(
     "on_lscolors_change",
@@ -179,8 +187,8 @@ def locale_convert(key):
             locale.setlocale(LOCALE_CATS[key], val)
             val = locale.setlocale(LOCALE_CATS[key])
         except (locale.Error, KeyError):
-            msg = "Failed to set locale {0!r} to {1!r}".format(key, val)
-            warnings.warn(msg, RuntimeWarning)
+            msg = f"Failed to set locale {key!r} to {val!r}"
+            warnings.warn(msg, RuntimeWarning, stacklevel=2)
         return val
 
     return lc_converter
@@ -191,12 +199,8 @@ def to_debug(x):
     execer's debug level.
     """
     val = to_bool_or_int(x)
-    if (
-        hasattr(builtins, "__xonsh__")
-        and hasattr(builtins.__xonsh__, "execer")
-        and builtins.__xonsh__.execer is not None
-    ):
-        builtins.__xonsh__.execer.debug_level = val
+    if XSH.execer is not None:
+        XSH.execer.debug_level = val
     return val
 
 
@@ -393,16 +397,9 @@ class LsColors(cabc.MutableMapping):
         return str(self._d)
 
     def __repr__(self):
-        return "{0}.{1}(...)".format(self.__class__.__module__, self.__class__.__name__)
+        return f"{self.__class__.__module__}.{self.__class__.__name__}(...)"
 
-    def _repr_pretty_(self, p, cycle):
-        name = "{0}.{1}".format(self.__class__.__module__, self.__class__.__name__)
-        with p.group(0, name + "(", ")"):
-            if cycle:
-                p.text("...")
-            elif len(self):
-                p.break_()
-                p.pretty(dict(self))
+    _repr_pretty_ = to_repr_pretty_
 
     def is_target(self, key) -> bool:
         """Return True if key is 'target'"""
@@ -418,9 +415,11 @@ class LsColors(cabc.MutableMapping):
                     + "="
                     + ";".join(
                         [
-                            LsColors.target_value
-                            if key in self._targets
-                            else ansi_color_name_to_escape_code(v, cmap=style)
+                            (
+                                LsColors.target_value
+                                if key in self._targets
+                                else ansi_color_name_to_escape_code(v, cmap=style)
+                            )
                             for v in val
                         ]
                     )
@@ -432,7 +431,7 @@ class LsColors(cabc.MutableMapping):
     @property
     def style_name(self):
         """Current XONSH_COLOR_STYLE value"""
-        env = getattr(builtins.__xonsh__, "env", {})
+        env = getattr(XSH, "env", {}) or {}
         env_style_name = env.get("XONSH_COLOR_STYLE", "default")
         if self._style_name is None or self._style_name != env_style_name:
             self._style_name = env_style_name
@@ -484,16 +483,23 @@ class LsColors(cabc.MutableMapping):
         if filename is not None:
             cmd.append(filename)
         # get env
-        if hasattr(builtins, "__xonsh__") and hasattr(builtins.__xonsh__, "env"):
-            denv = builtins.__xonsh__.env.detype()
+        if XSH.env:
+            denv = XSH.env.detype()
         else:
             denv = None
         # run dircolors
         try:
             out = subprocess.check_output(
-                cmd, env=denv, universal_newlines=True, stderr=subprocess.DEVNULL
+                cmd, env=denv, text=True, stderr=subprocess.DEVNULL
             )
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except (subprocess.CalledProcessError, FileNotFoundError, NotADirectoryError):
+            return cls(cls.default_settings)
+        except OSError as e:
+            # necessary to catch OSError: [WinError 740] The requested operation requires elevation
+            if not ON_WINDOWS:
+                print_warning(f"dircolors: {e}")
+            return cls(cls.default_settings)
+        if not out:
             return cls(cls.default_settings)
         s = out.splitlines()[0]
         _, _, s = s.partition("'")
@@ -524,7 +530,7 @@ def ensure_ls_colors_in_env(spec=None, **kwargs):
     environment. This fires exactly once upon the first time the
     ls command is called.
     """
-    env = builtins.__xonsh__.env
+    env = XSH.env
     if "LS_COLORS" not in env._d:
         # this adds it to the env too
         default_lscolors(env)
@@ -541,6 +547,7 @@ ENSURERS = {
     "str": (is_string, ensure_string, ensure_string),
     "path": (is_path, str_to_path, path_to_str),
     "env_path": (is_env_path, str_to_env_path, env_path_to_str),
+    "abs_path": (is_path, str_to_abs_path, abs_path_to_str),
     "float": (is_float, float, str),
     "int": (is_int, int, str),
 }
@@ -566,17 +573,61 @@ DEFAULT_TITLE = "{current_job:{} | }{user}@{hostname}: {cwd} | xonsh"
 @default_value
 def xonsh_data_dir(env):
     """Ensures and returns the $XONSH_DATA_DIR"""
-    xdd = os.path.expanduser(os.path.join(env.get("XDG_DATA_HOME"), "xonsh"))
+    xdd = os.path.expanduser(
+        os.getenv("XONSH_DATA_DIR") or os.path.join(env.get("XDG_DATA_HOME"), "xonsh")
+    )
+    os.makedirs(xdd, exist_ok=True)
+    return xdd
+
+
+@default_value
+def xonsh_cache_dir(env):
+    """Ensures and returns the $XONSH_CACHE_DIR"""
+    xdd = os.path.expanduser(
+        os.getenv("XONSH_CACHE_DIR") or os.path.join(env.get("XDG_CACHE_HOME"), "xonsh")
+    )
     os.makedirs(xdd, exist_ok=True)
     return xdd
 
 
 @default_value
 def xonsh_config_dir(env):
-    """Ensures and returns the $XONSH_CONFIG_DIR"""
-    xcd = os.path.expanduser(os.path.join(env.get("XDG_CONFIG_HOME"), "xonsh"))
+    """``$XDG_CONFIG_HOME/xonsh``"""
+    xcd = os.path.expanduser(
+        os.getenv("XONSH_CONFIG_DIR")
+        or os.path.join(env.get("XDG_CONFIG_HOME"), "xonsh")
+    )
     os.makedirs(xcd, exist_ok=True)
     return xcd
+
+
+@default_value
+def xdg_data_dirs(env):
+    r"""
+    On Windows: ``[%ProgramData%]`` (normally C:\ProgramData)
+        - More Info: https://docs.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-folderlocations-programdata
+
+    On Linux and Unix based systemd it is the same as in open-desktop standard: ``['/usr/share', '/usr/local/share']``
+    """
+    if ON_WINDOWS:
+        return [os_environ["ProgramData"]]
+    return [
+        os.path.join("/usr", "share"),
+        os.path.join("/usr", "local", "share"),
+    ]
+
+
+@default_value
+def xonsh_sys_config_dir(env):
+    """
+    On Linux & Mac OSX: ``'/etc/xonsh'``
+    On Windows: ``'%ALLUSERSPROFILE%\\\\xonsh'``
+    """
+    if ON_WINDOWS:
+        etc_path = os_environ["ALLUSERSPROFILE"]
+    else:
+        etc_path = "/etc"
+    return os.path.join(etc_path, "xonsh")
 
 
 def xonshconfig(env):
@@ -586,18 +637,22 @@ def xonshconfig(env):
     return xc
 
 
+def get_home_xonshrc_path():
+    """Cross-platform implementation of getting ``~/.xonshrc`` path."""
+    return str((Path("~") / ".xonshrc").expanduser())
+
+
 @default_value
-def default_xonshrc(env):
-    """Creates a new instance of the default xonshrc tuple."""
-    xcdrc = os.path.join(xonsh_config_dir(env), "rc.xsh")
-    if ON_WINDOWS:
-        dxrc = (
-            os.path.join(os_environ["ALLUSERSPROFILE"], "xonsh", "xonshrc"),
-            xcdrc,
-            os.path.expanduser("~/.xonshrc"),
-        )
-    else:
-        dxrc = ("/etc/xonshrc", xcdrc, os.path.expanduser("~/.xonshrc"))
+def default_xonshrc(env) -> "tuple[str, ...]":
+    """
+    ``['$XONSH_SYS_CONFIG_DIR/xonshrc', '$XONSH_CONFIG_DIR/xonsh/rc.xsh', '~/.xonshrc']``
+    """
+
+    dxrc = (
+        os.path.join(xonsh_sys_config_dir(env), "xonshrc"),
+        os.path.join(xonsh_config_dir(env), "rc.xsh"),
+        get_home_xonshrc_path(),
+    )
     # Check if old config file exists and issue warning
     old_config_filename = xonshconfig(env)
     if os.path.isfile(old_config_filename):
@@ -608,6 +663,40 @@ def default_xonshrc(env):
             + "Please migrate to xonshrc."
         )
     return dxrc
+
+
+def get_config_paths(env: "Env", name: str):
+    return (
+        os.path.join(xonsh_sys_config_dir(env), name),
+        os.path.join(xonsh_config_dir(env), name),
+    )
+
+
+@default_value
+def default_xonshrcdir(env):
+    """``['$XONSH_SYS_CONFIG_DIR/rc.d', '$XONSH_CONFIG_DIR/rc.d']``\n"""
+    return get_config_paths(env, "rc.d")
+
+
+@default_value
+def default_completer_dirs(env):
+    """By default, the following paths are searched.
+    1. ``$XONSH_CONFIG_DIR/completions`` - user level completions
+    2. ``$XONSH_SYS_CONFIG_DIR/completions`` - system level completions
+    3. ``$XONSH_DATA_DIR/generated_completions`` - auto generated completers from man pages
+    4. ``$XDG_DATA_DIRS/xonsh/vendor_completions`` - completers from other programs can be placed here.
+
+    Other than this, Python package namespace ``xompletions`` can be used to put completer modules as well.
+    """
+    # inspired from - https://fishshell.com/docs/current/completions.html#where-to-put-completions
+    return [
+        os.path.join(env["XONSH_CONFIG_DIR"], "completions"),
+        os.path.join(env["XONSH_SYS_CONFIG_DIR"], "completions"),
+        os.path.join(env["XONSH_DATA_DIR"], "generated_completions"),
+    ] + [
+        os.path.join(parent, "xonsh", "vendor_completions")
+        for parent in env["XDG_DATA_DIRS"]
+    ]
 
 
 @default_value
@@ -629,7 +718,14 @@ def default_lscolors(env):
     return lsc
 
 
-VarKeyType = tp.Union[str, tp.Pattern]
+@default_value
+def default_prompt_fields(env):
+    """``xonsh.prompt.PROMPT_FIELDS``"""
+    # todo: generate document for all default fields
+    return prompt.PromptFields(XSH)
+
+
+VarKeyType = tp.Union[str, tp.Pattern]  # noqa: UP007
 
 
 class Var(tp.NamedTuple):
@@ -662,24 +758,30 @@ class Var(tp.NamedTuple):
         potentially other non-trivial data types. default, False.
     pattern
         a regex pattern to match for the given variable
+    sync : str, optional
+        The name of env variable for mirroring the setting.
+    deprecated : bool, optional
+        Show warning about deprecated variable in case of setting.
     """
 
-    validate: tp.Optional[tp.Callable] = always_true
-    convert: tp.Optional[tp.Callable] = None
-    detype: tp.Optional[tp.Callable] = ensure_string
+    validate: tp.Callable | None = always_true
+    convert: tp.Callable | None = None
+    detype: tp.Callable | None = ensure_string
     default: tp.Any = DefaultNotGiven
     doc: str = ""
-    is_configurable: tp.Union[bool, LazyBool] = True
-    doc_default: tp.Union[str, DefaultNotGivenType] = DefaultNotGiven
+    is_configurable: bool | LazyBool = True
+    doc_default: str | DefaultNotGivenType = DefaultNotGiven
     can_store_as_str: bool = False
-    pattern: tp.Optional[VarKeyType] = None
+    pattern: VarKeyType | None = None
+    sync: str = ""
+    deprecated: bool = False
 
     @classmethod
     def with_default(
         cls,
         default: object,
         doc: str = "",
-        doc_default: tp.Union[str, DefaultNotGivenType] = DefaultNotGiven,
+        doc_default: str | DefaultNotGivenType = DefaultNotGiven,
         type_str: str = "",
         **kwargs,
     ):
@@ -693,6 +795,9 @@ class Var(tp.NamedTuple):
             kwargs.update(
                 {"validate": validator, "convert": convertor, "detype": detyper}
             )
+
+        if doc_default == DefaultNotGiven and is_callable_default(default):
+            doc_default = inspect.getdoc(default) or DefaultNotGiven
         return Var(default=default, doc=doc, doc_default=doc_default, **kwargs)
 
     @classmethod
@@ -713,6 +818,9 @@ class Var(tp.NamedTuple):
     def get_key(self, var_name: str) -> VarKeyType:
         return self.pattern or var_name
 
+    def set_attrs(self, attrs: dict):
+        return self._replace(**attrs)
+
 
 class Xettings:
     """Parent class - All setting classes will be inheriting from this.
@@ -721,15 +829,13 @@ class Xettings:
     """
 
     @classmethod
-    def get_settings(cls) -> tp.Iterator[tp.Tuple[VarKeyType, Var]]:
+    def get_settings(cls) -> tp.Iterator[tuple[VarKeyType, Var]]:
         for var_name, var in vars(cls).items():
             if not var_name.startswith("__") and var_name.isupper():
                 yield var.get_key(var_name), var
 
     @staticmethod
-    def _get_groups(
-        cls, _seen: tp.Optional[tp.Set["Xettings"]] = None, *bases: "Xettings"
-    ):
+    def _get_groups(cls, _seen: set["Xettings"] | None = None, *bases: "Xettings"):
         if _seen is None:
             _seen = set()
         subs = cls.__subclasses__()
@@ -743,9 +849,7 @@ class Xettings:
     @classmethod
     def get_groups(
         cls,
-    ) -> tp.Iterator[
-        tp.Tuple[tp.Tuple["Xettings", ...], tp.Tuple[tp.Tuple[VarKeyType, Var], ...]]
-    ]:
+    ) -> tp.Iterator[tuple[tuple["Xettings", ...], tuple[tuple[VarKeyType, Var], ...]]]:
         yield from Xettings._get_groups(cls)
 
     @classmethod
@@ -774,18 +878,6 @@ class Xettings:
 class GeneralSetting(Xettings):
     """General"""
 
-    AUTO_CONTINUE = Var.with_default(
-        False,
-        "If ``True``, automatically resume stopped jobs when they are disowned. "
-        "When stopped jobs are disowned and this option is ``False``, a warning "
-        "will print information about how to continue the stopped process.",
-    )
-
-    COMMANDS_CACHE_SIZE_WARNING = Var.with_default(
-        6000,
-        "Number of files on the PATH above which a warning is shown.",
-    )
-
     HOSTNAME = Var.with_default(
         default=default_value(lambda env: platform.node()),
         doc="Automatically set to the name of the current host.",
@@ -796,28 +888,11 @@ class GeneralSetting(Xettings):
         doc="Automatically set to a string that fully describes the system type on which xonsh is executing.",
         type_str="str",
     )
-    LANG = Var.with_default(
-        default="C.UTF-8",
-        doc="Fallback locale setting for systems where it matters",
-        type_str="str",
-    )
-    LC_COLLATE = Var.for_locale("LC_COLLATE")
-    LC_CTYPE = Var.for_locale("LC_CTYPE")
-    LC_MONETARY = Var.for_locale("LC_MONETARY")
-    LC_NUMERIC = Var.for_locale("LC_NUMERIC")
-    LC_TIME = Var.for_locale("LC_TIME")
-    if hasattr(locale, "LC_MESSAGES"):
-        LC_MESSAGES = Var.for_locale("LC_MESSAGES")
 
-    LOADED_RC_FILES = Var(
-        is_bool_seq,
-        csv_to_bool_seq,
-        bool_seq_to_csv,
-        (),
-        "Whether or not any of the xonsh run control files were loaded at "
-        "startup. This is a sequence of bools in Python that is converted "
-        "to a CSV list in string form, ie ``[True, False]`` becomes "
-        "``'True,False'``.",
+    PWD = Var.with_default(
+        _get_cwd() or ".",
+        "Current working directory.",
+        "os.getcwd()",
         is_configurable=False,
     )
     OLDPWD = Var.with_default(
@@ -849,14 +924,16 @@ class GeneralSetting(Xettings):
         "filtering valid executables by. Each element must be "
         "uppercase.",
     )
-    RAISE_SUBPROC_ERROR = Var.with_default(
-        False,
-        "Whether or not to raise an error if a subprocess (captured or "
-        "uncaptured) returns a non-zero exit status, which indicates failure. "
-        "This is most useful in xonsh scripts or modules where failures "
-        "should cause an end to execution. This is less useful at a terminal. "
-        "The error that is raised is a ``subprocess.CalledProcessError``.",
+
+    SHLVL = Var(
+        is_valid_shlvl,
+        to_shlvl,
+        str,
+        0,
+        "Shell nesting level typed as integer, mirrors bash's $SHLVL.",
+        is_configurable=False,
     )
+
     TERM = Var.no_default(
         "str",
         "TERM is sometimes set by the terminal emulator. This is used (when "
@@ -875,35 +952,7 @@ class GeneralSetting(Xettings):
         "not always happen.",
         is_configurable=False,
     )
-    THREAD_SUBPROCS = Var(
-        is_bool_or_none,
-        to_bool_or_none,
-        bool_or_none_to_str,
-        not ON_CYGWIN,
-        "Whether or not to try to run subrocess mode in a Python thread, "
-        "when applicable. There are various trade-offs, which normally "
-        "affects only interactive sessions.\n\nWhen True:\n\n"
-        "* Xonsh is able capture & store the stdin, stdout, and stderr \n"
-        "  of threadable subprocesses.\n"
-        "* However, stopping threaded subprocs with ^Z (i.e. ``SIGTSTP``)\n"
-        "  is disabled as it causes deadlocked terminals.\n"
-        "  ``SIGTSTP`` may still be issued and only the physical pressing\n"
-        "  of ``Ctrl+Z`` is ignored.\n"
-        "* Threadable commands are run with ``PopenThread`` and threadable \n"
-        "  aliases are run with ``ProcProxyThread``.\n\n"
-        "When False:\n\n"
-        "* Xonsh may not be able to capture stdin, stdout, and stderr streams \n"
-        "  unless explicitly asked to do so.\n"
-        "* Stopping the thread with ``Ctrl+Z`` yields to job control.\n"
-        "* Threadable commands are run with ``Popen`` and threadable \n"
-        "  alias are run with ``ProcProxy``.\n\n"
-        "The desired effect is often up to the command, user, or use case.\n\n"
-        "None values are for internal use only and are used to turn off "
-        "threading when loading xonshrc files. This is done because Bash "
-        "was automatically placing new xonsh instances in the background "
-        "at startup when threadable subprocs were used. Please see "
-        "https://github.com/xonsh/xonsh/pull/3705 for more information.\n",
-    )
+
     UPDATE_OS_ENVIRON = Var.with_default(
         False,
         "If True ``os_environ`` will always be updated "
@@ -925,52 +974,47 @@ class GeneralSetting(Xettings):
         doc_default="``~/.local/share``",
         type_str="str",
     )
+    XDG_CACHE_HOME = Var.with_default(
+        os.path.expanduser(os.path.join("~", ".cache")),
+        "The base directory relative to which user-specific non-essential data files should be stored.",
+        doc_default="``~/.cache``",
+        type_str="str",
+    )
+    XDG_DATA_DIRS = Var.with_default(
+        xdg_data_dirs,
+        "A list of directories where system level data files are stored.",
+        type_str="env_path",
+    )
+    XONSH_CONFIG_DIR = Var.with_default(
+        xonsh_config_dir,
+        "This is the location where xonsh user-level configuration information is stored.",
+        type_str="str",
+    )
+    XONSH_SYS_CONFIG_DIR = Var.with_default(
+        xonsh_sys_config_dir,
+        "This is the location where xonsh system-level configuration information is stored.",
+        is_configurable=False,
+        type_str="str",
+    )
     XONSHRC = Var.with_default(
         default_xonshrc,
         "A list of the locations of run control files, if they exist.  User "
         "defined run control file will supersede values set in system-wide "
         "control file if there is a naming collision. $THREAD_SUBPROCS=None "
         "when reading in run control files.",
-        doc_default=(
-            "On Linux & Mac OSX: ``['/etc/xonshrc', '~/.config/xonsh/rc.xsh', '~/.xonshrc']``\n"
-            "\nOn Windows: "
-            "``['%ALLUSERSPROFILE%\\\\xonsh\\\\xonshrc', '~/.config/xonsh/rc.xsh', '~/.xonshrc']``"
-        ),
         type_str="env_path",
     )
-    XONSH_APPEND_NEWLINE = Var.with_default(
-        xonsh_append_newline,
-        "Append new line when a partial line is preserved in output.",
-        doc_default="``$XONSH_INTERACTIVE``",
-        type_str="bool",
-    )
-    XONSH_CACHE_SCRIPTS = Var.with_default(
-        True,
-        "Controls whether the code for scripts run from xonsh will be cached"
-        " (``True``) or re-compiled each time (``False``).",
-    )
-    XONSH_CACHE_EVERYTHING = Var.with_default(
-        False,
-        "Controls whether all code (including code entered at the interactive"
-        " prompt) will be cached.",
-    )
-    XONSH_CONFIG_DIR = Var.with_default(
-        xonsh_config_dir,
-        "This is the location where xonsh configuration information is stored.",
-        is_configurable=False,
-        doc_default="``$XDG_CONFIG_HOME/xonsh``",
-        type_str="str",
+    XONSHRC_DIR = Var.with_default(
+        default_xonshrcdir,
+        "A list of directories, from which all .xsh|.py files will be loaded "
+        "at startup, sorted in lexographic order. Files in these directories "
+        "are loaded after any files in XONSHRC.",
+        type_str="env_path",
     )
     XONSH_COLOR_STYLE = Var.with_default(
         "default",
         "Sets the color style for xonsh colors. This is a style name, not "
         "a color map. Run ``xonfig styles`` to see the available styles.",
-        type_str="str",
-    )
-    XONSH_DATETIME_FORMAT = Var.with_default(
-        "%Y-%m-%d %H:%M",
-        "The format that is used for ``datetime.strptime()`` in various places, "
-        "i.e the history timestamp option.",
         type_str="str",
     )
     XONSH_DEBUG = Var(
@@ -979,16 +1023,14 @@ class GeneralSetting(Xettings):
         bool_or_int_to_str,
         0,
         "Sets the xonsh debugging level. This may be an integer or a boolean. "
-        "Setting this variable prior to stating xonsh to ``1`` or ``True`` "
-        "will suppress amalgamated imports. Setting it to ``2`` will get some "
-        "basic information like input transformation, command replacement. "
-        "With ``3`` or a higher number will make more debugging information "
+        "Setting it to ``1`` will get some basic information like input transformation, command replacement. "
+        "With ``2`` or a higher number will make more debugging information "
         "presented, like PLY parsing messages.",
         is_configurable=False,
     )
     XONSH_DATA_DIR = Var.with_default(
         xonsh_data_dir,
-        "This is the location where xonsh data files are stored, such as " "history.",
+        "This is the location where xonsh data files are stored, such as history, generated completers ...",
         doc_default="``$XDG_DATA_HOME/xonsh``",
         type_str="str",
     )
@@ -1010,7 +1052,9 @@ class GeneralSetting(Xettings):
     )
     XONSH_INTERACTIVE = Var.with_default(
         True,
-        "``True`` if xonsh is running interactively, and ``False`` otherwise.",
+        "``True`` if xonsh is running interactively, and ``False`` otherwise. "
+        "It's highly recommended to use this variable in your ``xonshrc`` files "
+        "to split the code execution for interactive and non-interactive modes.",
         is_configurable=False,
     )
     XONSH_LOGIN = Var.with_default(
@@ -1018,18 +1062,14 @@ class GeneralSetting(Xettings):
         "``True`` if xonsh is running as a login shell, and ``False`` otherwise.",
         is_configurable=False,
     )
-    XONSH_PROC_FREQUENCY = Var.with_default(
-        1e-4,
-        "The process frequency is the time that "
-        "xonsh process threads sleep for while running command pipelines. "
-        "The value has units of seconds [s].",
-    )
-    XONSH_SHOW_TRACEBACK = Var.with_default(
-        False,
-        "Controls if a traceback is shown if exceptions occur in the shell. "
-        "Set to ``True`` to always show traceback or ``False`` to always hide. "
-        "If undefined then the traceback is hidden but a notice is shown on how "
-        "to enable the full traceback.",
+    XONSH_MODE = Var.with_default(
+        default="interactive",  # In sync with ``main.py``.
+        doc="A string value representing the current xonsh execution mode: "
+        "``interactive``, ``script_from_file``, ``source``, ``single_command``, ``script_from_stdin``."
+        "Note! This variable reflects the mode at start time  (e.g. ``script_from_file``) "
+        "or code execution (e.g. ``source``).  If you need to gate behavior in an RC file that "
+        "you plan to ``source``, use ``$XONSH_INTERACTIVE`` as the flag instead.",
+        type_str="str",
     )
     XONSH_SOURCE = Var.with_default(
         "",
@@ -1042,14 +1082,9 @@ class GeneralSetting(Xettings):
         "Whether or not to store the stdin that is supplied to the "
         "``!()`` and ``![]`` operators.",
     )
-    XONSH_STORE_STDOUT = Var.with_default(
-        False,
-        "Whether or not to store the ``stdout`` and ``stderr`` streams in the "
-        "history files.",
-    )
     XONSH_STYLE_OVERRIDES = Var(
-        is_str_str_dict,
-        to_str_str_dict,
+        is_tok_color_dict,
+        to_tok_color_dict,
         dict_to_str,
         {},
         "A dictionary containing custom prompt_toolkit/pygments style definitions.\n"
@@ -1059,9 +1094,115 @@ class GeneralSetting(Xettings):
         "    - ptk style name (string) - ``$XONSH_STYLE_OVERRIDES['pygments.keyword'] = '#ff0000'``\n\n"
         "(The rules above are all have the same effect.)",
     )
-    XONSH_TRACE_SUBPROC = Var.with_default(
+    STAR_PATH = Var.no_default("env_path", pattern=re.compile(r"\w*PATH$"))
+    STAR_DIRS = Var.no_default("env_path", pattern=re.compile(r"\w*DIRS$"))
+
+
+class SubprocessSetting(Xettings):
+    """Subprocess Settings"""
+
+    RAISE_SUBPROC_ERROR = Var.with_default(
         False,
-        "Set to ``True`` to show arguments list of every executed subprocess command.",
+        "Whether or not to raise an error if a subprocess (captured or "
+        "uncaptured) returns a non-zero exit status, which indicates failure. "
+        "This is most useful in xonsh scripts or modules where failures "
+        "should cause an end to execution. This is less useful at a terminal. "
+        "The error that is raised is a ``subprocess.CalledProcessError``.",
+    )
+    LAST_RETURN_CODE = Var.with_default(
+        0,
+        "Integer return code of the last command. Only updated during interactive use, i.e. not during execution of scripts.",
+    )
+    XONSH_SUBPROC_CAPTURED_PRINT_STDERR = Var.with_default(
+        False,
+        "If ``True`` the stderr from captured subproc will be printed automatically.",
+    )
+    XONSH_SUBPROC_OUTPUT_FORMAT = Var.with_default(
+        "stream_lines",
+        "Set output format for subprocess e.g. ``du $(ls)``. "
+        "By default (``stream_lines``) subprocess operator returns text output. "
+        "Set ``list_lines`` to have list of lines.",
+    )
+
+    XONSH_CAPTURE_ALWAYS = Var.with_default(
+        False,
+        "Try to capture output of commands run without explicit capturing.\n"
+        "If True, xonsh will capture the output of commands run directly or in ``![]`` "
+        "to the session history.\n"
+        "Setting to True has the following disadvantages:\n"
+        "* Some interactive commands won't work properly (like when ``git`` invokes an interactive editor).\n"
+        "  For more information see discussion at https://github.com/xonsh/xonsh/issues/3672.\n"
+        "* Stopping these commands with ^Z (i.e. ``SIGTSTP``)\n"
+        "  is disabled as it causes deadlocked terminals.\n"
+        "  ``SIGTSTP`` may still be issued and only the physical pressing\n"
+        "  of ``Ctrl+Z`` is ignored.\n\n"
+        "Regardless of this value, commands run in ``$()``, ``!()`` or with an IO redirection (``>`` or ``|``) "
+        "will always be captured.\n"
+        "Setting this to True depends on ``$THREAD_SUBPROCS`` being True.",
+    )
+    THREAD_SUBPROCS = Var(
+        is_bool_or_none,
+        to_bool_or_none,
+        bool_or_none_to_str,
+        not ON_CYGWIN,
+        "Note: The ``$XONSH_CAPTURE_ALWAYS`` variable introduces finer control "
+        "and you should probably use that instead.\n\n"
+        "Whether or not to try to run subrocess mode in a Python thread, "
+        "when trying to capture its output. There are various trade-offs.\n\n"
+        "If True, xonsh is able capture & store the stdin, stdout, and stderr"
+        " of threadable subprocesses.\n"
+        "The disadvantages are listed in ``$XONSH_CAPTURE_ALWAYS``.\n"
+        "The desired effect is often up to the command, user, or use case.\n\n"
+        "None values are for internal use only and are used to turn off "
+        "threading when loading xonshrc files. This is done because Bash "
+        "was automatically placing new xonsh instances in the background "
+        "at startup when threadable subprocs were used. Please see "
+        "https://github.com/xonsh/xonsh/pull/3705 for more information.\n",
+    )
+    XONSH_APPEND_NEWLINE = Var.with_default(
+        xonsh_append_newline,
+        "Append new line when a partial line is preserved in output.",
+        doc_default="``$XONSH_INTERACTIVE``",
+        type_str="bool",
+    )
+    XONSH_PROC_FREQUENCY = Var.with_default(
+        1e-4,
+        "The process frequency is the time that "
+        "xonsh process threads sleep for while running command pipelines. "
+        "The value has units of seconds [s].",
+    )
+    XONSH_TRACE_SUBPROC = Var(
+        default=False,
+        validate=is_bool_or_int,
+        convert=to_bool_or_int,
+        doc="Set to ``True`` or ``1`` to show arguments list of every executed subprocess command. "
+        "Use ``2`` to have a specification. Use ``3`` to have full specification.",
+    )
+    XONSH_TRACE_SUBPROC_FUNC = Var.with_default(
+        None,
+        doc=(
+            "A callback function used to format the trace output shown when $XONSH_TRACE_SUBPROC=True."
+        ),
+        doc_default="""\
+    By default it just prints ``cmds`` like below.
+
+    .. code-block:: python
+
+        def tracer(cmds: list, captured: Union[bool, str]):
+            print(f"TRACE SUBPROC: {cmds}, captured={captured}", file=sys.stderr)
+    """,
+    )
+
+
+class ErrorHandlingSetting(Xettings):
+    """Error Handling Settings"""
+
+    XONSH_SHOW_TRACEBACK = Var.with_default(
+        False,
+        "Controls if a traceback is shown if exceptions occur in the shell. "
+        "Set to ``True`` to always show traceback or ``False`` to always hide. "
+        "If undefined then the traceback is hidden but a notice is shown on how "
+        "to enable the full traceback.",
     )
     XONSH_TRACEBACK_LOGFILE = Var(
         is_logfile_opt,
@@ -1073,8 +1214,79 @@ class GeneralSetting(Xettings):
         "or None / the empty string if traceback logging is not desired. "
         "Logging to a file is not enabled by default.",
     )
-    STAR_PATH = Var.no_default("env_path", pattern=re.compile(r"\w*PATH$"))
-    STAR_DIRS = Var.no_default("env_path", pattern=re.compile(r"\w*DIRS$"))
+
+
+class JobsSetting(Xettings):
+    """Jobs Settings"""
+
+    AUTO_CONTINUE = Var.with_default(
+        False,
+        "If ``True``, automatically resume stopped jobs when they are disowned. "
+        "When stopped jobs are disowned and this option is ``False``, a warning "
+        "will print information about how to continue the stopped process.",
+    )
+
+
+class LangSetting(Xettings):
+    """Language and locale settings."""
+
+    LANG = Var.with_default(
+        default="C.UTF-8",
+        doc="Fallback locale setting for systems where it matters",
+        type_str="str",
+    )
+    LC_COLLATE = Var.for_locale("LC_COLLATE")
+    LC_CTYPE = Var.for_locale("LC_CTYPE")
+    LC_MONETARY = Var.for_locale("LC_MONETARY")
+    LC_NUMERIC = Var.for_locale("LC_NUMERIC")
+    LC_TIME = Var.for_locale("LC_TIME")
+    if hasattr(locale, "LC_MESSAGES"):
+        LC_MESSAGES = Var.for_locale("LC_MESSAGES")
+
+    XONSH_DATETIME_FORMAT = Var.with_default(
+        "%Y-%m-%d %H:%M",
+        "The format that is used for ``datetime.strptime()`` in various places, "
+        "i.e the history timestamp option.",
+        type_str="str",
+    )
+
+
+class CacheSetting(Xettings):
+    """Cache Settings"""
+
+    XONSH_CACHE_SCRIPTS = Var.with_default(
+        True,
+        "Controls whether the code for scripts run from xonsh will be cached"
+        " (``True``) or re-compiled each time (``False``).",
+    )
+
+    XONSH_CACHE_EVERYTHING = Var.with_default(
+        False,
+        "Controls whether all code (including code entered at the interactive"
+        " prompt) will be cached.",
+    )
+
+    XONSH_CACHE_DIR = Var.with_default(
+        xonsh_cache_dir,
+        "This is the location where cache files used by xonsh are stored, such as commands-cache...",
+        doc_default="``$XDG_CACHE_HOME/xonsh``",
+        type_str="str",
+    )
+
+    ENABLE_COMMANDS_CACHE = Var(
+        default=True,
+        doc="command names in a directory are cached when enabled. "
+        "On some platforms it may not be accurate enough"
+        "(e.g. Windows, Linux save mtime in seconds). "
+        "Setting it to False would disable the caching mechanism "
+        "and may slow down the shell",
+        doc_default="True",
+    )
+
+    COMMANDS_CACHE_SAVE_INTERMEDIATE = Var.with_default(
+        False,
+        "If enabled, the CommandsCache is saved between runs and can reduce the startup time.",
+    )
 
 
 class ChangeDirSetting(Xettings):
@@ -1106,6 +1318,14 @@ class ChangeDirSetting(Xettings):
     PUSHD_SILENT = Var.with_default(
         False,
         "Whether or not to suppress directory stack manipulation output.",
+    )
+    COMPLETE_DOTS = Var.with_default(
+        "matching",
+        doc="Flag to specify how current and previous directories should be "
+        "tab completed  ('./', '../'):\n"
+        "    - ``always`` Always complete paths with ./ and ../\n"
+        "    - ``never`` Never complete paths with ./ and ../\n"
+        "    - ``matching`` Complete if path starts with . or ..",
     )
 
 
@@ -1147,6 +1367,23 @@ class InterpreterSetting(Xettings):
     )
 
 
+class XontribSetting(Xettings):
+    """Xontrib Settings"""
+
+    XONTRIBS_AUTOLOAD_DISABLED = Var.with_default(
+        default=False,
+        type_str="bool",
+        doc="""\
+    Controls auto-loading behaviour of xontrib packages at the startup.
+    * Set this to ``True`` to disable autoloading completely.
+    * Setting this to a list of xontrib names will block loading those specifically.
+    """,
+        doc_default="""\
+    Xontribs with ``xonsh.xontrib`` entrypoint will be loaded automatically by default.
+    """,
+    )
+
+
 class PromptSetting(Xettings):
     """Interactive Prompt"""
 
@@ -1172,21 +1409,6 @@ class PromptSetting(Xettings):
         "",
         "The string used to show a shortened directory in a shortened cwd, "
         "e.g. ``'…'``.",
-    )
-    HISTCONTROL = Var(
-        is_string_set,
-        csv_to_set,
-        set_to_csv,
-        set(),
-        "A set of strings (comma-separated list in string form) of options "
-        "that determine what commands are saved to the history list. By "
-        "default all commands are saved. The option ``ignoredups`` will not "
-        "save the command if it matches the previous command. The option "
-        "``ignoreerr`` will cause any commands that fail (i.e. return non-zero "
-        "exit status) to not be added to the history list. The option "
-        "``erasedups`` will remove all previous commands that matches and updates the frequency. "
-        "Note: ``erasedups`` is supported only in sqlite backend).",
-        can_store_as_str=True,
     )
     IGNOREEOF = Var.with_default(
         False,
@@ -1234,9 +1456,33 @@ class PromptSetting(Xettings):
         is_string_or_callable,
         ensure_string,
         ensure_string,
-        ".",
+        " ",
         "Prompt text for 2nd+ lines of input, may be str or function which "
         "returns a str.",
+    )
+    MULTILINE_PROMPT_PRE = Var(
+        is_string_or_callable,
+        ensure_string,
+        ensure_string,
+        DefaultNotGiven,
+        "Indicator inserted before the line continuation marks set "
+        "in ``$MULTILINE_PROMPT``. Can be used to mark the start of "
+        "a semantic continuation prompt "
+        "(see `Semantic Prompts <https://gitlab.freedesktop.org/Per_Bothner/specifications/blob/master/proposals/semantic-prompts.md>`_ "
+        "or `WezTerm <https://wezfurlong.org/wezterm/shell-integration.html>`_ "
+        "for more details). May be str or function which returns a str.",
+    )
+    MULTILINE_PROMPT_POS = Var(
+        is_string_or_callable,
+        ensure_string,
+        ensure_string,
+        DefaultNotGiven,
+        "Indicator inserted after the line continuation marks set "
+        "in ``$MULTILINE_PROMPT``. Can be used to mark the end of "
+        "a semantic continuation prompt and the beginning of user input "
+        "(see `Semantic Prompts <https://gitlab.freedesktop.org/Per_Bothner/specifications/blob/master/proposals/semantic-prompts.md>`_ "
+        "or `WezTerm <https://wezfurlong.org/wezterm/shell-integration.html>`_ "
+        "for more details). May be str or function which returns a str.",
     )
     PRETTY_PRINT_RESULTS = Var.with_default(
         True,
@@ -1253,16 +1499,15 @@ class PromptSetting(Xettings):
         "This value is never inherited from parent processes.",
         doc_default="``xonsh.environ.DEFAULT_PROMPT``",
     )
-    PROMPT_FIELDS = Var(
-        always_true,
-        None,
-        None,
-        prompt.PROMPT_FIELDS,
-        "Dictionary containing variables to be used when formatting $PROMPT "
+    PROMPT_FIELDS = Var.with_default(
+        default_prompt_fields,
+        validate=always_true,
+        convert=None,
+        detype=None,
+        doc="Dictionary containing variables to be used when formatting $PROMPT "
         "and $TITLE. See 'Customizing the Prompt' "
         "http://xon.sh/tutorial.html#customizing-the-prompt",
         is_configurable=False,
-        doc_default="``xonsh.prompt.PROMPT_FIELDS``",
     )
     PROMPT_REFRESH_INTERVAL = Var.with_default(
         0.0,  # keep as float
@@ -1312,7 +1557,8 @@ class PromptSetting(Xettings):
         "To use the ``prompt_toolkit`` shell you need to have the "
         "`prompt_toolkit <https://github.com/jonathanslenders/python-prompt-toolkit>`_"
         " library installed. To specify which shell should be used, do so in "
-        "the run control file.",
+        "the run control file. "
+        "It also accepts a class type that inherits from ``xonsh.shells.base_shell.BaseShell``",
         doc_default="``best``",
     )
     SUGGEST_COMMANDS = Var.with_default(
@@ -1372,58 +1618,11 @@ class PromptSetting(Xettings):
         "Path to the currently active Python environment.",
         is_configurable=False,
     )
-    XONSH_GITSTATUS_ = Var.with_default(
-        "",
-        "Symbols for gitstatus prompt. Default values are: \n\n"
-        "* ``XONSH_GITSTATUS_HASH``: ``:``\n"
-        "* ``XONSH_GITSTATUS_BRANCH``: ``{CYAN}``\n"
-        "* ``XONSH_GITSTATUS_OPERATION``: ``{CYAN}``\n"
-        "* ``XONSH_GITSTATUS_STAGED``: ``{RED}●``\n"
-        "* ``XONSH_GITSTATUS_CONFLICTS``: ``{RED}×``\n"
-        "* ``XONSH_GITSTATUS_CHANGED``: ``{BLUE}+``\n"
-        "* ``XONSH_GITSTATUS_UNTRACKED``: ``…``\n"
-        "* ``XONSH_GITSTATUS_STASHED``: ``⚑``\n"
-        "* ``XONSH_GITSTATUS_CLEAN``: ``{BOLD_GREEN}✓``\n"
-        "* ``XONSH_GITSTATUS_AHEAD``: ``↑·``\n"
-        "* ``XONSH_GITSTATUS_BEHIND``: ``↓·``\n",
-        pattern="XONSH_GITSTATUS_*",
-    )
-    XONSH_HISTORY_BACKEND = Var(
-        is_history_backend,
-        to_itself,
-        ensure_string,
-        "json",
-        "Set which history backend to use. Options are: 'json', "
-        "'sqlite', and 'dummy'. The default is 'json'. "
-        "``XONSH_HISTORY_BACKEND`` also accepts a class type that inherits "
-        "from ``xonsh.history.base.History``, or its instance.",
-    )
-    XONSH_HISTORY_FILE = Var.with_default(
-        None,
-        "Location of history file set by history backend (default) or set by user in RC file.",
-        is_configurable=False,
-        doc_default="None",
-        type_str="path",
-    )
     XONSH_HISTORY_MATCH_ANYWHERE = Var.with_default(
         False,
         "When searching history from a partial string (by pressing up arrow), "
         "match command history anywhere in a given line (not just the start)",
         doc_default="False",
-    )
-    XONSH_HISTORY_SIZE = Var(
-        is_history_tuple,
-        to_history_tuple,
-        history_tuple_to_str,
-        (8128, "commands"),
-        "Value and units tuple that sets the size of history after garbage "
-        "collection. Canonical units are:\n\n"
-        "- ``commands`` for the number of past commands executed,\n"
-        "- ``files`` for the number of history files to keep,\n"
-        "- ``s`` for the number of seconds in the past that are allowed, and\n"
-        "- ``b`` for the number of bytes that history may consume.\n\n"
-        "Common abbreviations, such as '6 months' or '1 GB' are also allowed.",
-        doc_default="``(8128, 'commands')`` or ``'8128 commands'``",
     )
     XONSH_STDERR_PREFIX = Var.with_default(
         "",
@@ -1441,6 +1640,87 @@ class PromptSetting(Xettings):
         "For example, to have stderr appear on a red background, the "
         'prefix & postfix pair would be "{BACKGROUND_RED}" & "{RESET}".',
     )
+    XONSH_SUPPRESS_WELCOME = Var.with_default(
+        False,
+        "Suppresses the welcome message.",
+    )
+
+
+class PromptHistorySetting(Xettings):
+    """Interactive Prompt History"""
+
+    XONSH_HISTORY_BACKEND = Var(
+        is_history_backend,
+        to_itself,
+        ensure_string,
+        "json",
+        "Set which history backend to use. Options are: 'json', "
+        "'sqlite', and 'dummy'. The default is 'json'. "
+        "``XONSH_HISTORY_BACKEND`` also accepts a class type that inherits "
+        "from ``xonsh.history.base.History``, or its instance.",
+    )
+    XONSH_HISTORY_FILE = Var.with_default(
+        None,
+        "Location of history file set by history backend (default) or set by the user.",
+        is_configurable=False,
+        doc_default="None",
+        type_str="abs_path",
+    )
+    HISTCONTROL = Var(
+        is_string_set,
+        csv_to_set,
+        set_to_csv,
+        set(),
+        "A set of strings (comma-separated list in string form) of options "
+        "that determine what commands are saved to the history list. By "
+        "default all commands are saved. Options are as follows:\n\n"
+        "- ``ignoredups`` will not save the command if it matches the previous command\n"
+        "- ``ignoreerr`` will cause any commands that fail (i.e. return non-zero "
+        "exit status) to not be added to the history list\n"
+        "- ``ignorespace`` will not save the command if it begins with a space\n"
+        "- ``erasedups`` will remove all previous commands that matches and updates the frequency "
+        "(Note: only supported in sqlite backend)",
+        can_store_as_str=True,
+    )
+    XONSH_HISTORY_SIZE = Var(
+        is_history_tuple,
+        to_history_tuple,
+        history_tuple_to_str,
+        (8128, "commands"),
+        "Value and units tuple that sets the size of history after garbage "
+        "collection. Canonical units are:\n\n"
+        "- ``commands`` for the number of past commands executed,\n"
+        "- ``files`` for the number of history files to keep,\n"
+        "- ``s`` for the number of seconds in the past that are allowed, and\n"
+        "- ``b`` for the number of bytes that history may consume.\n\n"
+        "Common abbreviations, such as '6 months' or '1 GB' are also allowed.",
+        doc_default="``(8128, 'commands')`` or ``'8128 commands'``",
+    )
+    XONSH_STORE_STDOUT = Var.with_default(
+        False,
+        "Store the ``stdout`` and ``stderr`` streams to the history. "
+        "Requires that XONSH_CAPTURE_ALWAYS is True.",
+    )
+    XONSH_HISTORY_SAVE_CWD = Var.with_default(
+        True,
+        "Save current working directory to the history.",
+        doc_default="True",
+    )
+    XONSH_HISTORY_IGNORE_REGEX = Var(
+        is_regex,
+        to_itself,
+        ensure_string,
+        None,
+        "Set a filter criteria for history items using a regular expression. "
+        "Any matching items will not be retained in the history. "
+        "Example: ``$XONSH_HISTORY_IGNORE_REGEX = '(^echo|^.*\\#\\#\\#\\s*|.*\\#\\#\\#\\s*$)'``"
+        " - skip commands that start from ``echo`` or ``###``, or end from ``###``.",
+    )
+    XONSH_HISTORY_SIGINT_FLUSH = Var.with_default(
+        True,
+        "Save history after getting SIGINT (Ctrl+C).",
+        doc_default="True",
+    )
 
 
 class PTKSetting(PromptSetting):  # sub-classing -> sub-group
@@ -1448,12 +1728,23 @@ class PTKSetting(PromptSetting):  # sub-classing -> sub-group
     Only usable with ``$SHELL_TYPE=prompt_toolkit.``
     """
 
-    AUTO_SUGGEST = Var.with_default(
+    XONSH_PROMPT_AUTO_SUGGEST = Var.with_default(
         True,
-        "Enable automatic command suggestions based on history, like in the fish "
-        "shell.\n\nPressing the right arrow key inserts the currently "
-        "displayed suggestion. ",
+        "Enable automatic command suggestions based on history."
+        "\n\nPressing the right arrow key inserts the currently "
+        "displayed suggestion. Set before starting the prompt e.g. in ``.xonshrc`` file.",
+        sync="AUTO_SUGGEST",
     )
+
+    XONSH_PROMPT_NEXT_CMD = Var.with_default(
+        "",
+        "The text of the next command that will be inserted in the next prompt.",
+    )
+    XONSH_PROMPT_NEXT_CMD_SUGGESTION = Var.with_default(
+        "",
+        "The text of the next command suggestion that will be inserted in the next prompt.",
+    )
+
     AUTO_SUGGEST_IN_COMPLETIONS = Var.with_default(
         False,
         "Places the auto-suggest result as the first option in the completions. "
@@ -1476,9 +1767,22 @@ class PTKSetting(PromptSetting):  # sub-classing -> sub-group
         "``DEPTH_1_BIT``, ``DEPTH_4_BIT``, ``DEPTH_8_BIT``, ``DEPTH_24_BIT`` "
         "colors. Default is an empty string which means that prompt toolkit decide.",
     )
+    XONSH_PROMPT_CURSOR_SHAPE = Var(
+        always_false,
+        to_ptk_cursor_shape,
+        to_ptk_cursor_shape_display_value,
+        to_ptk_cursor_shape("modal-vi-mode-only"),
+        "The cursor shape. Possible values for prompt toolkit are: "
+        "``block``, ``beam``, ``underline``, "
+        "``blinking-block``, ``blinking-beam``, ``blinking-underline``, "
+        "``modal``, ``modal-vi-mode-only``, ``never-change``. "
+        "Default value is ``modal-vi-mode-only`` which means "
+        "``modal`` if in vi mode and ``never-change`` if not in vi mode.",
+        doc_default="modal-vi-mode-only",
+    )
     PTK_STYLE_OVERRIDES = Var(
-        is_str_str_dict,
-        to_str_str_dict,
+        is_tok_color_dict,
+        to_tok_color_dict,
         dict_to_str,
         {},
         "A dictionary containing custom prompt_toolkit style definitions. (deprecated)",
@@ -1491,6 +1795,25 @@ class PTKSetting(PromptSetting):  # sub-classing -> sub-group
         False,
         "Whether Xonsh will auto-insert matching parentheses, brackets, and "
         "quotes. Only available under the prompt-toolkit shell.",
+    )
+    XONSH_COPY_ON_DELETE = Var.with_default(
+        False,
+        "Whether to copy words/lines to clipboard on deletion (must be set in the run control file)."
+        "Does not have any effect in ``vi_mode``."
+        "Only available under the prompt-toolkit shell.",
+    )
+    XONSH_USE_SYSTEM_CLIPBOARD = Var.with_default(
+        True,
+        "Whether to let the shell use the system clipboard (must be set in the run control file)."
+        "The main use-case is to fully disable clipboard integration in ``vi_mode``."
+        "Only available under the prompt-toolkit shell.",
+    )
+    XONSH_CTRL_BKSP_DELETION = Var.with_default(
+        False,
+        "Delete a word on CTRL-Backspace (like ALT-Backspace). "
+        r"This will only work when your terminal emulator sends ``\x7f`` on backspace and "
+        r"``\x08`` on CTRL-Backspace (which is configurable on most terminal emulators). "
+        r"On windows, the keys are reversed.",
     )
 
 
@@ -1510,7 +1833,7 @@ class AsyncPromptSetting(PTKSetting):
         to_int_or_none,
         str,
         None,
-        "Define the number of workers used by the ASYC_PROPMT's pool. "
+        "Define the number of workers used by the ASYNC_PROMPT's pool. "
         "By default it is the same as defined by Python's concurrent.futures.ThreadPoolExecutor class.",
     )
     ENABLE_ASYNC_PROMPT = Var.with_default(
@@ -1523,6 +1846,27 @@ class AsyncPromptSetting(PTKSetting):
 class AutoCompletionSetting(Xettings):
     """Tab-completion behavior."""
 
+    ALIAS_COMPLETIONS_OPTIONS_BY_DEFAULT = Var.with_default(
+        doc="""\
+If True, :py:class:`xonsh.completers.argparser.ArgparseCompleter` based completions
+will show options (e.g. -h, ...) without requesting explicitly with option prefix (e.g. '-').""",
+        default=False,
+    )
+    ALIAS_COMPLETIONS_OPTIONS_LONGEST = Var.with_default(
+        doc="""\
+Whether to show all options or just the longest for
+the :py:class:`xonsh.completers.argparser.ArgparseCompleter` based completions.
+For example, with ``-h``, ``--help`` both denoting ``help`` action.
+If True, then only ``--help`` is shown.
+This is to reduce the noise in generated completions.""",
+        default=False,
+    )
+    CMD_COMPLETIONS_SHOW_DESC = Var.with_default(
+        doc="If True, command completions will show description part with path to the binary and alias in case of "
+        "xonsh functions.",
+        default=False,
+        type_str="bool",
+    )
     BASH_COMPLETIONS = Var.with_default(
         doc="This is a list (or tuple) of strings that specifies where the "
         "``bash_completion`` script may be found. "
@@ -1532,7 +1876,7 @@ class AutoCompletionSetting(Xettings):
         "For both bash-completion v1.x and v2.x, paths of individual completion "
         "scripts (like ``.../completes/ssh``) do not need to be included here. "
         "The default values are platform "
-        "dependent, but sane. To specify an alternate list, do so in the run "
+        "dependent, but reasonable. To specify an alternate list, do so in the run "
         "control file.",
         default=BASH_COMPLETIONS_DEFAULT,
         doc_default=(
@@ -1540,14 +1884,15 @@ class AutoCompletionSetting(Xettings):
             "    ``('/usr/share/bash-completion/bash_completion', )``\n\n"
             "But, on Mac it is:\n\n"
             "    ``('/usr/local/share/bash-completion/bash_completion', "
-            "'/usr/local/etc/bash_completion')``\n\n"
+            "'/usr/local/etc/bash_completion', "
+            "'/opt/homebrew/share/bash-completion/bash_completion'),``\n\n"
             "Other OS-specific defaults may be added in the future."
         ),
         type_str="env_path",
     )
     CASE_SENSITIVE_COMPLETIONS = Var.with_default(
         ON_LINUX,
-        "Sets whether completions should be case sensitive or case " "insensitive.",
+        "Sets whether completions should be case sensitive or case insensitive.",
         doc_default="True on Linux, False otherwise.",
     )
     COMPLETIONS_BRACKETS = Var.with_default(
@@ -1572,6 +1917,30 @@ class AutoCompletionSetting(Xettings):
         True,
         "Toggles subsequence matching of paths for tab completion. "
         "If ``True``, then, e.g., ``~/u/ro`` can match ``~/lou/carcolh``.",
+    )
+    XONSH_BASH_PATH_OVERRIDE = Var.with_default(
+        None,
+        doc="Override the path used to call bash externally. This allows "
+        "a user to choose which bash executable to call for ``source-bash`` "
+        "and any bash completions that are configured. "
+        "This variable overrides the default settings in "
+        "``xonsh.platform.bash_command``.",
+        doc_default="None",
+    )
+    XONSH_COMPLETER_DIRS = Var.with_default(
+        default_completer_dirs,
+        """\
+A list of paths where Xonsh searches for command completions.
+Any completions defined are lazy loaded when needed.
+The name of the completer file should match that of the completing command.
+The file should contain a function with the signature
+``xonsh_complete(ctx: CommandContext) -> Iterator[RichCompletion|str]``.
+""",
+        type_str="env_path",
+    )
+    XONSH_TRACE_COMPLETIONS = Var.with_default(
+        False,
+        "Set to ``True`` to show completers invoked and their return values.",
     )
 
 
@@ -1668,6 +2037,14 @@ class WindowsSetting(GeneralSetting):
     )
 
 
+class DeprecatedSetting(PromptSetting):  # sub-classing -> sub-group
+    """Deprecated settings."""
+
+    AUTO_SUGGEST = PTKSetting.XONSH_PROMPT_AUTO_SUGGEST.set_attrs(
+        {"sync": "XONSH_PROMPT_AUTO_SUGGEST", "deprecated": True}
+    )
+
+
 # Please keep the following in alphabetic order - scopatz
 @lazyobject
 def DEFAULT_VARS():
@@ -1699,7 +2076,7 @@ class Env(cabc.MutableMapping):
 
     def __init__(self, *args, **kwargs):
         """If no initial environment is given, os_environ is used."""
-        self._d = {}
+        self._d = InternalEnvironDict()
         # sentinel value for non existing envvars
         self._no_value = object()
         self._orig_env = None
@@ -1711,15 +2088,24 @@ class Env(cabc.MutableMapping):
             self[key] = val
         if ON_WINDOWS:
             path_key = next((k for k in self._d if k.upper() == "PATH"), None)
-            if path_key:
+            if path_key is not None:
                 self["PATH"] = self._d.pop(path_key)
         if "PATH" not in self._d:
             # this is here so the PATH is accessible to subprocs and so that
             # it can be modified in-place in the xonshrc file
-            self._d["PATH"] = list(PATH_DEFAULT)
+            self._d["PATH"] = EnvPath(PATH_DEFAULT)
         self._detyped = None
 
+    def get_detyped(self, key: str):
+        detyped = self.detype()
+        return detyped.get(key)
+
     def detype(self):
+        """
+        Returns a dict of detyped variables.
+        Note! If env variable wasn't explicitly set (e.g. the value has default value in ``Xettings``)
+        it will be not in this list.
+        """
         if self._detyped is not None:
             return self._detyped
         ctx = {}
@@ -1735,6 +2121,24 @@ class Env(cabc.MutableMapping):
                 # cannot be detyped
                 continue
             ctx[key] = deval
+        self._detyped = ctx
+        return ctx
+
+    def detype_all(self):  # __getitem__
+        """Returns a dict of all available detyped env variables."""
+        if self._detyped is not None:
+            return self._detyped
+        ctx = {}
+        for key in self.rawkeys():
+            if not isinstance(key, str):
+                key = str(key)
+            val = self.__getitem__(key)
+            detyper = self.get_detyper(key)
+            if detyper is not None:
+                val = detyper(val)
+            if not isinstance(val, str):
+                continue
+            ctx[key] = val
         self._detyped = ctx
         return ctx
 
@@ -1877,17 +2281,19 @@ class Env(cabc.MutableMapping):
         """Provides a context manager for temporarily swapping out certain
         environment variables with other values. On exit from the context
         manager, the original values are restored.
+        The changes are only applied to the current thread, so that they don't leak between threads.
+        To get the thread-local overrides use `get_swapped_values` and `set_swapped_values`.
         """
         old = {}
         # single positional argument should be a dict-like object
         if other is not None:
             for k, v in other.items():
                 old[k] = self.get(k, NotImplemented)
-                self[k] = v
+                self._set_item(k, v, thread_local=True)
         # kwargs could also have been sent in
         for k, v in kwargs.items():
             old[k] = self.get(k, NotImplemented)
-            self[k] = v
+            self._set_item(k, v, thread_local=True)
 
         exception = None
         try:
@@ -1898,11 +2304,17 @@ class Env(cabc.MutableMapping):
             # restore the values
             for k, v in old.items():
                 if v is NotImplemented:
-                    del self[k]
+                    self._del_item(k, thread_local=True)
                 else:
-                    self[k] = v
+                    self._set_item(k, v, thread_local=True)
             if exception is not None:
                 raise exception from None
+
+    def get_swapped_values(self):
+        return self._d.get_local_overrides()
+
+    def set_swapped_values(self, swapped_values):
+        self._d.set_local_overrides(swapped_values)
 
     #
     # Mutable mapping interface
@@ -1921,12 +2333,35 @@ class Env(cabc.MutableMapping):
             e = "Unknown environment variable: ${}"
             raise KeyError(e.format(key))
         if isinstance(
-            val, (cabc.MutableSet, cabc.MutableSequence, cabc.MutableMapping)
+            val, cabc.MutableSet | cabc.MutableSequence | cabc.MutableMapping
         ):
             self._detyped = None
         return val
 
     def __setitem__(self, key, val):
+        self._set_item(key, val)
+
+    def _set_item(self, key, val, thread_local=False, check_sync=True):
+        if check_sync and key in self._vars:
+            if self._vars[key].deprecated:
+                sync_txt = (
+                    f" Replace it to {self._vars[key].sync!r}."
+                    if self._vars[key].sync
+                    else ""
+                )
+                warnings.warn(
+                    f"env: Setting deprecated env variable {key!r}.{sync_txt}",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            if self._vars[key].sync:
+                self._set_item(
+                    self._vars[key].sync,
+                    val,
+                    thread_local=thread_local,
+                    check_sync=False,
+                )
+
         validator = self.get_validator(key)
         converter = self.get_converter(key)
         detyper = self.get_detyper(key)
@@ -1934,7 +2369,10 @@ class Env(cabc.MutableMapping):
             val = converter(val)
         # existing envvars can have any value including None
         old_value = self._d[key] if key in self._d else self._no_value
-        self._d[key] = val
+        if thread_local:
+            self._d.set_locally(key, val)
+        else:
+            self._d[key] = val
         self._detyped = None
         if self.get("UPDATE_OS_ENVIRON"):
             if self._orig_env is None:
@@ -1951,8 +2389,14 @@ class Env(cabc.MutableMapping):
             events.on_envvar_change.fire(name=key, oldvalue=old_value, newvalue=val)
 
     def __delitem__(self, key):
+        self._del_item(key)
+
+    def _del_item(self, key, thread_local=False):
         if key in self._d:
-            del self._d[key]
+            if thread_local:
+                self._d.del_locally(key)
+            else:
+                del self._d[key]
             self._detyped = None
             if self.get("UPDATE_OS_ENVIRON") and key in os_environ:
                 del os_environ[key]
@@ -1971,17 +2415,22 @@ class Env(cabc.MutableMapping):
         else:
             return default
 
+    def get_stringified(self, key, default=None):
+        value = self.get(key, default)
+        detyper = self.get_detyper(key)
+        return detyper(value)
+
     def rawkeys(self):
         """An iterator that returns all environment keys in their original form.
         This include string & compiled regular expression keys.
         """
         yield from (
             set(self._d)
-            | set(
+            | {
                 k
                 for k in self._vars.keys()
                 if self._vars[k].default is not DefaultNotGiven
-            )
+            }
         )
 
     def __iter__(self):
@@ -2001,11 +2450,14 @@ class Env(cabc.MutableMapping):
         return str(self._d)
 
     def __repr__(self):
-        return "{0}.{1}(...)".format(self.__class__.__module__, self.__class__.__name__)
+        return f"{self.__class__.__module__}.{self.__class__.__name__}(...)"
+
+    def __hash__(self) -> int:
+        return hash(str(self._d))
 
     def _repr_pretty_(self, p, cycle):
-        name = "{0}.{1}".format(self.__class__.__module__, self.__class__.__name__)
-        with p.group(0, name + "(", ")"):
+        name = f"{self.__class__.__module__}.{self.__class__.__name__}"
+        with p.group(1, name + "(", ")"):
             if cycle:
                 p.text("...")
             elif len(self):
@@ -2039,7 +2491,8 @@ class Env(cabc.MutableMapping):
             Default value for variable. ``ValueError`` raised if type does not match
             that specified by `type` (or `validate`).
         doc : str, optional
-            Docstring for variable.
+            Docstring for variable. This description will be shown in the
+            autocomplete menu (tab-completion).
         validate : func, optional
             Function to validate type.
         convert : func, optional
@@ -2093,44 +2546,138 @@ class Env(cabc.MutableMapping):
         """
         self._vars.pop(name)
 
+    def is_configurable(self, name):
+        if name not in self._vars:
+            return False
+        return self._vars[name].is_configurable
 
-def _yield_executables(directory, name):
-    if ON_WINDOWS:
-        base_name, ext = os.path.splitext(name.lower())
-        for fname in executables_in(directory):
-            fbase, fext = os.path.splitext(fname.lower())
-            if base_name == fbase and (len(ext) == 0 or ext == fext):
-                yield os.path.join(directory, fname)
-    else:
-        for x in executables_in(directory):
-            if x == name:
-                yield os.path.join(directory, name)
-                return
+
+class InternalEnvironDict(ChainMap):
+    """A dictionary which supports thread-local overrides.
+    There are two reasons we can't use ChainMap directly:
+    1. To use thread-local storage, we need to access the local().__dict__ directly each time to get the correct dict.
+    2. We want to set items to the local storage only if they were explicitly set there.
+    """
+
+    def __init__(self):
+        self._global = {}
+        self._thread_local = threading.local()
+        super().__init__()
+
+    @property
+    def _local(self):
+        # As per local's documentation, accessing its `__dict__` works fine (but must be done inside the thread).
+        return self._thread_local.__dict__
+
+    @property  # type: ignore
+    def maps(self):
+        # The 'maps' array needs to contain the thread-local dictionary every time we use it.
+        # We prefer getting from the local scope if possible.
+        return [self._local, self._global]
+
+    @maps.setter
+    def maps(self, _v):
+        # This is here for ChainMap.__init__.
+        pass
+
+    def __setitem__(self, key, value):
+        # If the value is overridden locally, set it locally.
+        local = self._local
+        if key in local:
+            local[key] = value
+        else:
+            self._global[key] = value
+
+    def __delitem__(self, key):
+        # If the value is overridden locally, delete it locally.
+        try:
+            del self._local[key]
+        except KeyError:
+            del self._global[key]
+
+    def pop(self, key, *args):
+        # If the value is overridden locally, pop it locally.
+        try:
+            return self._local.pop(key)
+        except KeyError:
+            return self._global.pop(key, *args)
+
+    def popitem(self):
+        # Fallback to the global dictionary if nothing is overridden locally.
+        try:
+            return self._local.popitem()
+        except KeyError:
+            return self._global.popitem()
+
+    def set_locally(self, key, value):
+        self._local[key] = value
+
+    def del_locally(self, key):
+        try:
+            del self._local[key]
+        except KeyError:
+            pass
+
+    def get_local_overrides(self):
+        return self._local.copy()
+
+    def set_local_overrides(self, new_local):
+        local = self._local
+        local.clear()
+        local.update(new_local)
 
 
 def locate_binary(name):
-    """Locates an executable on the file system."""
-    return builtins.__xonsh__.commands_cache.locate_binary(name)
+    """Locates an executable on the file system.
+
+    NOT RECOMMENDED because ``commands_cache.locate_binary`` contains ``update_cache``
+    with scanning all files in ``$PATH``. First of all take a look into ``xonsh.specs.executables``
+    for more fast implementation the locate operation.
+    """
+    return XSH.commands_cache.locate_binary(name)
 
 
-def xonshrc_context(rcfiles=None, execer=None, ctx=None, env=None, login=True):
-    """Attempts to read in all xonshrc files and return the context."""
-    loaded = env["LOADED_RC_FILES"] = []
+def scan_dir_for_source_files(path: str):
+    if not os.path.isdir(path):
+        return
+    with os.scandir(path) as it:
+        for entry in it:
+            if entry.is_file() and (entry.name.endswith((".py", ".xsh"))):
+                yield os.path.join(path, entry.name), entry
+
+
+def xonshrc_context(
+    rcfiles=None, rcdirs=None, execer=None, ctx=None, env=None, login=True
+):
+    """
+    Attempts to read in all xonshrc files (and search xonshrc directories),
+    and returns the list of rc file paths successfully loaded, in the order
+    of loading.
+    """
+    loaded = []
     ctx = {} if ctx is None else ctx
-    if rcfiles is None:
-        return env
     orig_thread = env.get("THREAD_SUBPROCS")
     env["THREAD_SUBPROCS"] = None
-    env["XONSHRC"] = tuple(rcfiles)
-    for rcfile in rcfiles:
-        if not os.path.isfile(rcfile):
-            loaded.append(False)
-            continue
-        status = xonsh_script_run_control(rcfile, ctx, env, execer=execer, login=login)
-        loaded.append(status)
+    if rcfiles is not None:
+        for rcfile in rcfiles:
+            if os.path.isfile(rcfile):
+                status = xonsh_script_run_control(
+                    rcfile, ctx, env, execer=execer, login=login
+                )
+                if status:
+                    loaded.append(rcfile)
+
+    if rcdirs is not None:
+        for rcdir in rcdirs:
+            for rcfile in sorted(dict(scan_dir_for_source_files(rcdir))):
+                status = xonsh_script_run_control(
+                    rcfile, ctx, env, execer=execer, login=login
+                )
+                if status:
+                    loaded.append(rcfile)
     if env["THREAD_SUBPROCS"] is None:
         env["THREAD_SUBPROCS"] = orig_thread
-    return ctx
+    return loaded
 
 
 def windows_foreign_env_fixes(ctx):
@@ -2165,26 +2712,30 @@ class _RcPath(str):
 
 
 def xonsh_script_run_control(filename, ctx, env, execer=None, login=True):
-    """Loads a xonsh file and applies it as a run control."""
+    """Loads a xonsh file and applies it as a run control.
+    Any exceptions are logged here, returns boolean indicating success.
+    """
     if execer is None:
         return False
     updates = {"__file__": filename, "__name__": os.path.abspath(filename)}
     rc_dir = _RcPath(os.path.dirname(filename))
     sys.path.append(rc_dir)
-    try:
-        with swap_values(ctx, updates):
-            run_script_with_cache(filename, execer, ctx)
-        loaded = True
-    except SyntaxError as err:
-        msg = "syntax error in xonsh run control file {0!r}: {1!s}"
-        print_exception(msg.format(filename, err))
-        loaded = False
-    except Exception as err:
-        msg = "error running xonsh run control file {0!r}: {1!s}"
-        print_exception(msg.format(filename, err))
-        loaded = False
-    finally:
-        sys.path = list(filter(lambda p: p is not rc_dir, sys.path))
+    with swap_values(ctx, updates):
+        try:
+            exc_info = run_script_with_cache(filename, execer, ctx)
+        except SyntaxError:
+            exc_info = sys.exc_info()
+        if exc_info != (None, None, None):
+            err_type, err, _ = exc_info
+            loaded = False
+            if err_type is SyntaxError:
+                msg = "syntax error in xonsh run control file {0!r}: {1!s}"
+            else:
+                msg = "error running xonsh run control file {0!r}: {1!s}"
+            print_exception(msg.format(filename, err), exc_info=exc_info)
+        else:
+            loaded = True
+    sys.path = list(filter(lambda p: p is not rc_dir, sys.path))
     return loaded
 
 
@@ -2193,7 +2744,7 @@ def default_env(env=None):
     # in order of increasing precedence
     ctx = {
         "BASH_COMPLETIONS": list(DEFAULT_VARS["BASH_COMPLETIONS"].default),
-        "PROMPT_FIELDS": dict(DEFAULT_VARS["PROMPT_FIELDS"].default),
+        "PROMPT_FIELDS": DEFAULT_VARS["PROMPT_FIELDS"].default(env),
         "XONSH_VERSION": XONSH_VERSION,
     }
     ctx.update(os_environ)
@@ -2206,6 +2757,9 @@ def default_env(env=None):
         del ctx["PROMPT"]
     except KeyError:
         pass
+    # increment $SHLVL
+    old_shlvl = to_shlvl(ctx.get("SHLVL", None))
+    ctx["SHLVL"] = adjust_shlvl(old_shlvl, 1)
     # finalize env
     if env is not None:
         ctx.update(env)

@@ -1,7 +1,12 @@
-# -*- coding: utf-8 -*-
 """Base class of Xonsh History backends."""
+
+import functools
+import re
 import types
 import uuid
+
+from xonsh.built_ins import XSH
+from xonsh.tools import print_warning
 
 
 class HistoryEntry(types.SimpleNamespace):
@@ -18,7 +23,8 @@ class HistoryEntry(types.SimpleNamespace):
     ts: two-tuple of floats
         The timestamps of when the command started and finished, including
         fractions.
-
+    cwd: str
+        The current working directory before execution the command.
     """
 
 
@@ -67,11 +73,13 @@ class History:
         self.rtns = None
         self.tss = None
         self.outs = None
+        self.cwds = None
         self.last_cmd_rtn = None
         self.last_cmd_out = None
         self.hist_size = None
         self.hist_units = None
         self.remember_history = True
+        self.ignore_regex  # Tap the ignore regex to validate it # noqa
 
     def __len__(self):
         """Return the number of items in current session."""
@@ -87,26 +95,25 @@ class History:
                 out=self.outs[item],
                 rtn=self.rtns[item],
                 ts=self.tss[item],
+                cwd=self.cwds[item],
             )
         elif isinstance(item, slice):
             cmds = self.inps[item]
             outs = self.outs[item]
             rtns = self.rtns[item]
             tss = self.tss[item]
+            cwds = self.cwds[item]
             return [
-                HistoryEntry(cmd=c, out=o, rtn=r, ts=t)
-                for c, o, r, t in zip(cmds, outs, rtns, tss)
+                HistoryEntry(cmd=c, out=o, rtn=r, ts=t, cwd=cwd)
+                for c, o, r, t, cwd in zip(cmds, outs, rtns, tss, cwds, strict=False)
             ]
         else:
             raise TypeError(
-                "history indices must be integers "
-                "or slices, not {}".format(type(item))
+                f"history indices must be integers or slices, not {type(item)}"
             )
 
     def __setitem__(self, *args):
-        raise PermissionError(
-            "You cannot change history! " "you can create new though."
-        )
+        raise PermissionError("You cannot change history! you can create new though.")
 
     def append(self, cmd):
         """Append a command item into history.
@@ -120,6 +127,10 @@ class History:
             as instance variables in the ``HistoryEntry`` class.
         """
         pass
+
+    def pull(self, **kwargs):
+        """Pull history from other parallel sessions."""
+        raise NotImplementedError
 
     def flush(self, **kwargs):
         """Flush the history items to disk from a buffer."""
@@ -143,7 +154,7 @@ class History:
         """
         raise NotImplementedError
 
-    def run_gc(self, size=None, blocking=True):
+    def run_gc(self, size=None, blocking=True, **_):
         """Run the garbage collector.
 
         Parameters
@@ -160,3 +171,52 @@ class History:
         memory.
         """
         pass
+
+    def delete(self, pattern):
+        """Deletes the history of the current session for commands that match
+        a user-provided pattern.
+
+        Parameters
+        ----------
+        pattern: str
+            The regex pattern to match commands against.
+
+        Returns
+        -------
+        int
+            The number of commands deleted from history.
+        """
+        pass
+
+    @functools.cached_property
+    def ignore_regex(self):
+        compiled_regex = None
+        regex = XSH.env.get("XONSH_HISTORY_IGNORE_REGEX")
+        if regex:
+            try:
+                compiled_regex = re.compile(regex)
+            except re.error:
+                print_warning(
+                    "XONSH_HISTORY_IGNORE_REGEX is not a valid regular expression and will be ignored"
+                )
+        return compiled_regex
+
+    def is_ignored(self, cmd):
+        """Determines if a history item should be added to the event history.
+        Call this in your append method.
+
+        Parameters
+        ----------
+        cmd: dict
+            The prospective item to append (structure is the same as the append method).
+
+        Returns
+        -------
+        bool
+            True if the item should be appended, False if not.
+        """
+        return (
+            (self.ignore_regex.match(cmd["inp"]) is not None)
+            if self.ignore_regex is not None
+            else False
+        )

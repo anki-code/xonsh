@@ -1,25 +1,24 @@
 """Tools for helping with ANSI color codes."""
+
 import re
 import sys
 import warnings
-import builtins
-import typing as tp
 
-from xonsh.platform import HAS_PYGMENTS
-from xonsh.lazyasd import LazyDict, lazyobject
+from xonsh.built_ins import XSH
 from xonsh.color_tools import (
-    RE_XONSH_COLOR,
     BASE_XONSH_COLORS,
-    make_palette,
+    RE_XONSH_COLOR,
     find_closest_color,
+    iscolor,
+    make_palette,
     rgb2short,
     rgb_to_256,
     short_to_ints,
-    iscolor,
     warn_deprecated_no_color,
 )
+from xonsh.lib.lazyasd import LazyDict, lazyobject
+from xonsh.platform import HAS_PYGMENTS
 from xonsh.tools import FORMATTER
-
 
 # pygments modifier to ANSI escape code mapping
 _PART_STYLE_CODE_MAPPING = {
@@ -49,7 +48,7 @@ def _ensure_color_map(style="default", cmap=None):
         except Exception:
             msg = "Could not find color style {0!r}, using default."
             print(msg.format(style), file=sys.stderr)
-            builtins.__xonsh__.env["XONSH_COLOR_STYLE"] = "default"
+            XSH.env["XONSH_COLOR_STYLE"] = "default"
             cmap = ANSI_STYLES["default"]
     return cmap
 
@@ -84,7 +83,7 @@ def ansi_color_name_to_escape_code(name, style="default", cmap=None):
         return cmap[name]
     m = RE_XONSH_COLOR.match(name)
     if m is None:
-        raise ValueError("{!r} is not a color!".format(name))
+        raise ValueError(f"{name!r} is not a color!")
     parts = m.groupdict()
     # convert regex match into actual ANSI colors
     if parts["reset"] is not None:
@@ -163,7 +162,7 @@ def ansi_partial_color_format(template, style="default", cmap=None, hide=False):
 
 def _ansi_partial_color_format_main(template, style="default", cmap=None, hide=False):
     cmap = _ensure_color_map(style=style, cmap=cmap)
-    overrides = builtins.__xonsh__.env["XONSH_STYLE_OVERRIDES"]
+    overrides = XSH.env["XONSH_STYLE_OVERRIDES"]
     if overrides:
         cmap.update(_style_dict_to_ansi(overrides))
     esc = ("\001" if hide else "") + "\033["
@@ -206,8 +205,8 @@ def ansi_color_style(style="default"):
     if style in ANSI_STYLES:
         cmap = ANSI_STYLES[style]
     else:
-        msg = "Could not find color style {0!r}, using default.".format(style)
-        warnings.warn(msg, RuntimeWarning)
+        msg = f"Could not find color style {style!r}, using default."
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
         cmap = ANSI_STYLES["default"]
     return cmap
 
@@ -282,9 +281,6 @@ def _color_name_from_ints(ints, background=False, prefix=None):
     return name
 
 
-_ANSI_COLOR_ESCAPE_CODE_TO_NAME_CACHE: tp.Dict[str, tp.Tuple[str, ...]] = {}
-
-
 def ansi_color_escape_code_to_name(escape_code, style, reversed_style=None):
     """Converts an ANSI color code escape sequence to a tuple of color names
     in the provided style ('default' should almost be the style). For example,
@@ -294,19 +290,13 @@ def ansi_color_escape_code_to_name(escape_code, style, reversed_style=None):
     too, which is just the keys/values of the style dict swapped. If reversed
     style is not provided, it is computed.
     """
-    key = (escape_code, style)
-    # todo: see the cache ever used?
-    if key in _ANSI_COLOR_ESCAPE_CODE_TO_NAME_CACHE:
-        return _ANSI_COLOR_ESCAPE_CODE_TO_NAME_CACHE[key]
     if reversed_style is None:
         style, reversed_style = ansi_reverse_style(style, return_style=True)
     # strip some actual escape codes, if needed.
     match = ANSI_ESCAPE_CODE_RE.match(escape_code)
     if not match:
-        msg = 'Invalid ANSI color sequence "{0}", using "RESET" instead.'.format(
-            escape_code
-        )
-        warnings.warn(msg, RuntimeWarning)
+        msg = f'Invalid ANSI color sequence "{escape_code}", using "RESET" instead.'
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
         return ("RESET",)
     ec = match.group(2)
     names = []
@@ -1099,8 +1089,8 @@ def make_ansi_style(palette):
 def _pygments_to_ansi_style(style):
     """Tries to convert the given pygments style to ANSI style.
 
-    Parameter
-    ---------
+    Parameters
+    ----------
     style : pygments style value
 
     Returns
@@ -1158,10 +1148,16 @@ def ansi_style_by_name(name):
     if name in ANSI_STYLES:
         return ANSI_STYLES[name]
     elif not HAS_PYGMENTS:
-        raise KeyError("could not find style {0!r}".format(name))
+        print(f"could not find style {name!r}, using 'default'")
+        return ANSI_STYLES["default"]
+    from pygments.util import ClassNotFound
+
     from xonsh.pygments_cache import get_style_by_name
 
-    pstyle = get_style_by_name(name)
+    try:
+        pstyle = get_style_by_name(name)
+    except (ModuleNotFoundError, ClassNotFound):
+        pstyle = get_style_by_name("default")
     palette = make_palette(pstyle.styles.values())
     astyle = make_ansi_style(palette)
     ANSI_STYLES[name] = astyle

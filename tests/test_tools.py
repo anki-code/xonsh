@@ -1,98 +1,95 @@
-# -*- coding: utf-8 -*-
 """Tests xonsh tools."""
+
 import datetime as dt
 import os
 import pathlib
-import stat
-from tempfile import TemporaryDirectory
+import re
+import subprocess
 import warnings
 
 import pytest
 
 from xonsh import __version__
-from xonsh.platform import (
-    ON_WINDOWS,
-    HAS_PYGMENTS,
-)
-from xonsh.lexer import Lexer
-
+from xonsh.parsers.lexer import Lexer
+from xonsh.platform import HAS_PYGMENTS, ON_WINDOWS, PYTHON_VERSION_INFO
+from xonsh.pytest.tools import skip_if_on_windows
 from xonsh.tools import (
     EnvPath,
+    all_permutations,
     always_false,
     always_true,
     argvquote,
+    balanced_parens,
     bool_or_int_to_str,
     bool_or_none_to_str,
     bool_to_str,
     check_for_partial_string,
+    check_quotes,
+    deprecated,
     dynamic_cwd_tuple_to_str,
+    ends_with_colon_token,
     ensure_slice,
     ensure_string,
-    path_to_str,
+    ensure_timestamp,
     env_path_to_str,
     escape_windows_cmd_string,
-    executables_in,
     expand_case_matching,
     expand_path,
+    expandvars,
     find_next_break,
+    get_line_continuation,
+    get_logical_line,
+    get_portions,
+    iglobpath,
+    is_balanced,
     is_bool,
     is_bool_or_int,
     is_bool_or_none,
     is_callable,
+    is_completion_mode,
+    is_completions_display_value,
     is_dynamic_cwd_width,
-    is_path,
     is_env_path,
     is_float,
     is_int,
+    is_int_as_str,
     is_logfile_opt,
-    is_string_or_callable,
-    logfile_opt_to_str,
-    str_to_path,
-    str_to_env_path,
+    is_nonstring_seq_of_strings,
+    is_path,
+    is_regex,
+    is_slice_as_str,
     is_string,
+    is_string_or_callable,
+    is_string_seq,
+    is_tok_color_dict,
+    is_writable_file,
+    logfile_opt_to_str,
+    path_to_str,
+    pathsep_to_seq,
+    pathsep_to_set,
+    pathsep_to_upper_seq,
+    print_exception,
+    register_custom_style,
+    replace_logical_line,
+    seq_to_pathsep,
+    seq_to_upper_pathsep,
+    set_to_pathsep,
+    simple_random_choice,
+    str_to_env_path,
+    str_to_path,
+    subexpr_before_unbalanced,
     subexpr_from_unbalanced,
     subproc_toks,
+    swap_values,
     to_bool,
     to_bool_or_int,
     to_bool_or_none,
-    to_int_or_none,
-    to_dynamic_cwd_tuple,
-    to_logfile_opt,
-    pathsep_to_set,
-    set_to_pathsep,
-    is_string_seq,
-    pathsep_to_seq,
-    seq_to_pathsep,
-    is_nonstring_seq_of_strings,
-    pathsep_to_upper_seq,
-    seq_to_upper_pathsep,
-    expandvars,
-    is_int_as_str,
-    is_slice_as_str,
-    ensure_timestamp,
-    get_portions,
-    is_balanced,
-    subexpr_before_unbalanced,
-    swap_values,
-    get_line_continuation,
-    get_logical_line,
-    replace_logical_line,
-    check_quotes,
-    deprecated,
-    is_writable_file,
-    balanced_parens,
-    iglobpath,
-    all_permutations,
-    register_custom_style,
-    simple_random_choice,
-    is_completion_mode,
     to_completion_mode,
-    is_completions_display_value,
     to_completions_display_value,
+    to_dynamic_cwd_tuple,
+    to_int_or_none,
+    to_logfile_opt,
 )
-from xonsh.environ import Env
-
-from tools import skip_if_on_windows
 
 LEXER = Lexer()
 LEXER.build()
@@ -101,7 +98,6 @@ INDENT = "    "
 
 TOOLS_ENV = {"EXPAND_ENV_VARS": True, "XONSH_ENCODING_ERRORS": "strict"}
 ENCODE_ENV_ONLY = {"XONSH_ENCODING_ERRORS": "strict"}
-PATHEXT_ENV = {"PATHEXT": [".COM", ".EXE", ".BAT"]}
 
 
 def test_random_choice():
@@ -127,49 +123,49 @@ def test_subproc_toks_ls_l():
 
 def test_subproc_toks_git():
     s = 'git commit -am "hello doc"'
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_git_semi():
     s = 'git commit -am "hello doc"'
-    exp = "![{0}];".format(s)
+    exp = f"![{s}];"
     obs = subproc_toks(s + ";", lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_git_nl():
     s = 'git commit -am "hello doc"'
-    exp = "![{0}]\n".format(s)
+    exp = f"![{s}]\n"
     obs = subproc_toks(s + "\n", lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_bash_macro():
     s = "bash -c ! export var=42; echo $var"
-    exp = "![{0}]\n".format(s)
+    exp = f"![{s}]\n"
     obs = subproc_toks(s + "\n", lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_python_macro():
     s = 'python -c ! import os; print(os.path.abspath("/"))'
-    exp = "![{0}]\n".format(s)
+    exp = f"![{s}]\n"
     obs = subproc_toks(s + "\n", lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_indent_ls():
     s = "ls -l"
-    exp = INDENT + "![{0}]".format(s)
+    exp = INDENT + f"![{s}]"
     obs = subproc_toks(INDENT + s, mincol=len(INDENT), lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_indent_ls_nl():
     s = "ls -l"
-    exp = INDENT + "![{0}]\n".format(s)
+    exp = INDENT + f"![{s}]\n"
     obs = subproc_toks(
         INDENT + s + "\n", mincol=len(INDENT), lexer=LEXER, returnline=True
     )
@@ -178,28 +174,28 @@ def test_subproc_toks_indent_ls_nl():
 
 def test_subproc_toks_indent_ls_no_min():
     s = "ls -l"
-    exp = INDENT + "![{0}]".format(s)
+    exp = INDENT + f"![{s}]"
     obs = subproc_toks(INDENT + s, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_indent_ls_no_min_nl():
     s = "ls -l"
-    exp = INDENT + "![{0}]\n".format(s)
+    exp = INDENT + f"![{s}]\n"
     obs = subproc_toks(INDENT + s + "\n", lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_indent_ls_no_min_semi():
     s = "ls"
-    exp = INDENT + "![{0}];".format(s)
+    exp = INDENT + f"![{s}];"
     obs = subproc_toks(INDENT + s + ";", lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_indent_ls_no_min_semi_nl():
     s = "ls"
-    exp = INDENT + "![{0}];\n".format(s)
+    exp = INDENT + f"![{s}];\n"
     obs = subproc_toks(INDENT + s + ";\n", lexer=LEXER, returnline=True)
     assert exp == obs
 
@@ -207,7 +203,7 @@ def test_subproc_toks_indent_ls_no_min_semi_nl():
 def test_subproc_toks_ls_comment():
     s = "ls -l"
     com = "  # lets list"
-    exp = "![{0}]{1}".format(s, com)
+    exp = f"![{s}]{com}"
     obs = subproc_toks(s + com, lexer=LEXER, returnline=True)
     assert exp == obs
 
@@ -215,7 +211,7 @@ def test_subproc_toks_ls_comment():
 def test_subproc_toks_ls_42_comment():
     s = "ls 42"
     com = "  # lets list"
-    exp = "![{0}]{1}".format(s, com)
+    exp = f"![{s}]{com}"
     obs = subproc_toks(s + com, lexer=LEXER, returnline=True)
     assert exp == obs
 
@@ -223,7 +219,7 @@ def test_subproc_toks_ls_42_comment():
 def test_subproc_toks_ls_str_comment():
     s = 'ls "wakka"'
     com = "  # lets list"
-    exp = "![{0}]{1}".format(s, com)
+    exp = f"![{s}]{com}"
     obs = subproc_toks(s + com, lexer=LEXER, returnline=True)
     assert exp == obs
 
@@ -232,7 +228,7 @@ def test_subproc_toks_indent_ls_comment():
     ind = "    "
     s = "ls -l"
     com = "  # lets list"
-    exp = "{0}![{1}]{2}".format(ind, s, com)
+    exp = f"{ind}![{s}]{com}"
     obs = subproc_toks(ind + s + com, lexer=LEXER, returnline=True)
     assert exp == obs
 
@@ -241,7 +237,7 @@ def test_subproc_toks_indent_ls_str():
     ind = "    "
     s = 'ls "wakka"'
     com = "  # lets list"
-    exp = "{0}![{1}]{2}".format(ind, s, com)
+    exp = f"{ind}![{s}]{com}"
     obs = subproc_toks(ind + s + com, lexer=LEXER, returnline=True)
     assert exp == obs
 
@@ -249,8 +245,8 @@ def test_subproc_toks_indent_ls_str():
 def test_subproc_toks_ls_l_semi_ls_first():
     lsdl = "ls -l"
     ls = "ls"
-    s = "{0}; {1}".format(lsdl, ls)
-    exp = "![{0}]; {1}".format(lsdl, ls)
+    s = f"{lsdl}; {ls}"
+    exp = f"![{lsdl}]; {ls}"
     obs = subproc_toks(s, lexer=LEXER, maxcol=6, returnline=True)
     assert exp == obs
 
@@ -258,8 +254,8 @@ def test_subproc_toks_ls_l_semi_ls_first():
 def test_subproc_toks_ls_l_semi_ls_second():
     lsdl = "ls -l"
     ls = "ls"
-    s = "{0}; {1}".format(lsdl, ls)
-    exp = "{0}; ![{1}]".format(lsdl, ls)
+    s = f"{lsdl}; {ls}"
+    exp = f"{lsdl}; ![{ls}]"
     obs = subproc_toks(s, lexer=LEXER, mincol=7, returnline=True)
     assert exp == obs
 
@@ -267,8 +263,8 @@ def test_subproc_toks_ls_l_semi_ls_second():
 def test_subproc_toks_hello_mom_first():
     fst = "echo 'hello'"
     sec = "echo 'mom'"
-    s = "{0}; {1}".format(fst, sec)
-    exp = "![{0}]; {1}".format(fst, sec)
+    s = f"{fst}; {sec}"
+    exp = f"![{fst}]; {sec}"
     obs = subproc_toks(s, lexer=LEXER, maxcol=len(fst) + 1, returnline=True)
     assert exp == obs
 
@@ -276,8 +272,8 @@ def test_subproc_toks_hello_mom_first():
 def test_subproc_toks_hello_mom_second():
     fst = "echo 'hello'"
     sec = "echo 'mom'"
-    s = "{0}; {1}".format(fst, sec)
-    exp = "{0}; ![{1}]".format(fst, sec)
+    s = f"{fst}; {sec}"
+    exp = f"{fst}; ![{sec}]"
     obs = subproc_toks(s, lexer=LEXER, mincol=len(fst), returnline=True)
     assert exp == obs
 
@@ -304,7 +300,7 @@ def test_subproc_toks_hello_bad_trailing_triple_quotes():
 
 def test_subproc_toks_hello_mom_triple_quotes_nl():
     s = 'echo """hello\nmom"""'
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True)
     assert exp == obs
 
@@ -359,44 +355,44 @@ def test_subproc_toks_semicolon_only():
 
 def test_subproc_toks_pyeval():
     s = "echo @(1+1)"
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_pyeval_multiline_string():
     s = 'echo @("""hello\nmom""")'
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_twopyeval():
     s = "echo @(1+1) @(40 + 2)"
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_pyeval_parens():
     s = "echo @(1+1)"
-    inp = "({0})".format(s)
-    exp = "(![{0}])".format(s)
+    inp = f"({s})"
+    exp = f"(![{s}])"
     obs = subproc_toks(inp, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_twopyeval_parens():
     s = "echo @(1+1) @(40+2)"
-    inp = "({0})".format(s)
-    exp = "(![{0}])".format(s)
+    inp = f"({s})"
+    exp = f"(![{s}])"
     obs = subproc_toks(inp, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_pyeval_nested():
     s = "echo @(min(1, 42))"
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True)
     assert exp == obs
 
@@ -422,65 +418,65 @@ def test_subproc_toks_pyeval_nested():
 )
 def test_subproc_toks_and_or(phrase):
     s = "echo " + phrase
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_pyeval_nested_parens():
     s = "echo @(min(1, 42))"
-    inp = "({0})".format(s)
-    exp = "(![{0}])".format(s)
+    inp = f"({s})"
+    exp = f"(![{s}])"
     obs = subproc_toks(inp, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_capstdout():
     s = "echo $(echo bat)"
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_capproc():
     s = "echo !(echo bat)"
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_pyeval_redirect():
     s = 'echo @("foo") > bar'
-    inp = "{0}".format(s)
-    exp = "![{0}]".format(s)
+    inp = f"{s}"
+    exp = f"![{s}]"
     obs = subproc_toks(inp, lexer=LEXER, returnline=True)
     assert exp == obs
 
 
 def test_subproc_toks_greedy_parens():
     s = "(sort)"
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True, greedy=True)
     assert exp == obs
 
 
 def test_subproc_toks_greedy_parens_inp():
     s = "(sort) < input.txt"
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True, greedy=True)
     assert exp == obs
 
 
 def test_subproc_toks_greedy_parens_statements():
     s = '(echo "abc"; sleep 1; echo "def")'
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True, greedy=True)
     assert exp == obs
 
 
 def test_subproc_toks_greedy_parens_statements_with_grep():
     s = '(echo "abc"; sleep 1; echo "def") | grep'
-    exp = "![{0}]".format(s)
+    exp = f"![{s}]"
     obs = subproc_toks(s, lexer=LEXER, returnline=True, greedy=True)
     assert exp == obs
 
@@ -515,18 +511,14 @@ mom"""
     ),
     # test from start
     (
-        "echo --option1 value1 \\\n"
-        "     --option2 value2 \\\n"
-        "     --optionZ valueZ",
+        "echo --option1 value1 \\\n     --option2 value2 \\\n     --optionZ valueZ",
         0,
         "echo --option1 value1      --option2 value2      --optionZ valueZ",
         3,
     ),
     # test from second line
     (
-        "echo --option1 value1 \\\n"
-        "     --option2 value2 \\\n"
-        "     --optionZ valueZ",
+        "echo --option1 value1 \\\n     --option2 value2 \\\n     --optionZ valueZ",
         1,
         "echo --option1 value1      --option2 value2      --optionZ valueZ",
         3,
@@ -536,7 +528,7 @@ mom"""
 
 
 @pytest.mark.parametrize("src, idx, exp_line, exp_n", LOGICAL_LINE_CASES)
-def test_get_logical_line(src, idx, exp_line, exp_n, xonsh_builtins):
+def test_get_logical_line(src, idx, exp_line, exp_n, xession):
     lines = src.splitlines()
     line, n, start = get_logical_line(lines, idx)
     assert exp_line == line
@@ -544,7 +536,7 @@ def test_get_logical_line(src, idx, exp_line, exp_n, xonsh_builtins):
 
 
 @pytest.mark.parametrize("src, idx, exp_line, exp_n", LOGICAL_LINE_CASES)
-def test_replace_logical_line(src, idx, exp_line, exp_n, xonsh_builtins):
+def test_replace_logical_line(src, idx, exp_line, exp_n, xession):
     lines = src.splitlines()
     logical = exp_line
     while idx > 0 and lines[idx - 1].endswith("\\"):
@@ -579,7 +571,7 @@ def test_is_balanced_parens(inp):
     assert obs
 
 
-@pytest.mark.parametrize("inp", ["f(x.", "f(1,x." "f((1,10),x.y"])
+@pytest.mark.parametrize("inp", ["f(x.", "f(1,x.f((1,10),x.y"])
 def test_is_not_balanced_parens(inp):
     obs = is_balanced(inp, "(", ")")
     assert not obs
@@ -627,6 +619,29 @@ def test_subexpr_before_unbalanced_parens(inp, exp):
 )
 def test_balanced_parens(line, exp):
     obs = balanced_parens(line, lexer=LEXER)
+    if exp:
+        assert obs
+    else:
+        assert not obs
+
+
+@pytest.mark.parametrize(
+    "line, exp",
+    [
+        ("if 1:", True),
+        ("elif 2: #comment", True),
+        ("elif 3: #colon comment:", True),
+        ("else: ", True),
+        ("for s in '#not-a-comment':", True),
+        ("", False),
+        ("#comment", False),
+        ("#colon comment:", False),
+        ("print('hello')", False),
+        ("print('hello') #colon comment:", False),
+    ],
+)
+def test_ends_with_colon_token(line, exp):
+    obs = ends_with_colon_token(line, lexer=LEXER)
     if exp:
         assert obs
     else:
@@ -880,7 +895,19 @@ def test_str_to_env_path(inp, exp):
     assert exp == obs.paths
 
 
-@pytest.mark.parametrize("inp, exp", [(pathlib.Path("///tmp"), "/tmp")])
+@pytest.mark.parametrize(
+    "inp, exp",
+    [
+        pytest.param(
+            pathlib.Path("///tmp"),
+            "/tmp",
+            marks=pytest.mark.skipif(
+                ON_WINDOWS and PYTHON_VERSION_INFO > (3, 11),
+                reason="Python 3.12 on windows changed its behavior of resolving additional slashes in paths",
+            ),
+        ),
+    ],
+)
 def test_path_to_str(inp, exp):
     obs = path_to_str(inp)
     if ON_WINDOWS:
@@ -918,6 +945,110 @@ def test_env_path_add(left, right, exp):
     assert exp == obs
 
 
+def test_env_path_add_replace_no_dupes_front_replace_existing():
+    # Test replaces without dupes when added to front when adding existing entry
+    path = EnvPath(
+        [os.sep.join(["home", "wakka"]), os.sep.join(["home", "wakka", "bin"])]
+    )
+    path.add(os.sep.join(["home", "wakka", "bin"]), front=True, replace=True)
+    assert path == [
+        os.sep.join(["home", "wakka", "bin"]),
+        os.sep.join(["home", "wakka"]),
+    ]
+
+
+def test_env_path_add_replace_no_dupes_front_replace_multiple():
+    # Test replaces without dupes when added to front when multiple existing occurrences
+    path = EnvPath(
+        [
+            os.sep.join(["home", "wakka"]),
+            os.sep.join(["home", "wakka", "bin"]),
+            os.sep.join(["home", "wakka", "bin"]),
+        ]
+    )
+    path.add(os.sep.join(["home", "wakka", "bin"]), front=True, replace=True)
+    assert path == [
+        os.sep.join(["home", "wakka", "bin"]),
+        os.sep.join(["home", "wakka"]),
+    ]
+
+
+def test_env_path_add_replace_no_dupes_back_replace_multiple():
+    # Test replaces without dupes when not added to front
+    path = EnvPath(
+        [
+            os.sep.join(["home", "wakka"]),
+            os.sep.join(["home", "wakka", "bin"]),
+            os.sep.join(["home", "wakka", "bin"]),
+        ]
+    )
+    path.add(os.sep.join(["home", "wakka", "bin"]), front=False, replace=True)
+    assert path == [
+        os.sep.join(["home", "wakka"]),
+        os.sep.join(["home", "wakka", "bin"]),
+    ]
+
+
+def test_env_path_add_pathlib():
+    os.sep.join(["home", "wakka", "bin"])
+    path = EnvPath(
+        [
+            os.sep.join(["home", "wakka"]),
+            os.sep.join(["home", "wakka", "bin"]),
+            os.sep.join(["home", "wakka", "bin"]),
+        ]
+    )
+    path.add(
+        pathlib.Path(os.sep.join(["home", "wakka", "bin"])),
+        front=False,
+        replace=True,
+    )
+    assert path == [
+        os.sep.join(["home", "wakka"]),
+        os.sep.join(["home", "wakka", "bin"]),
+    ]
+
+
+def test_env_path_append_remove_pathlib_path():
+    path = EnvPath()
+
+    # Append-remove
+    path.append(os.sep.join(["home", "dino"]))
+    path.remove(os.sep.join(["home", "dino"]))
+
+    path.append(os.sep.join(["~", "dino"]))
+    path.remove(pathlib.Path(os.sep.join(["~", "dino"])))
+
+    path.append(pathlib.Path(os.sep.join(["~", "dino"])))
+    path.remove(pathlib.Path(os.sep.join(["~", "dino"])))
+
+    path.append(pathlib.Path(os.sep.join(["~", "dino"])))
+    path.remove(os.sep.join(["~", "dino"]))
+
+    path.append(
+        pathlib.Path(os.sep.join([str(pathlib.Path("~").expanduser()), "dino"]))
+    )
+    path.remove(os.sep.join(["~", "dino"]))
+
+    path.append(pathlib.Path(os.sep.join(["~", "dino"])))
+    path.remove(os.sep.join([str(pathlib.Path("~").expanduser()), "dino"]))
+
+    # Insert-remove
+    path.insert(0, os.sep.join(["home", "dino"]))
+    path.remove(os.sep.join(["home", "dino"]))
+
+    path.insert(0, os.sep.join(["~", "dino"]))
+    path.remove(pathlib.Path(os.sep.join(["~", "dino"])))
+
+    path.insert(0, pathlib.Path(os.sep.join(["~", "dino"])))
+    path.remove(pathlib.Path(os.sep.join(["~", "dino"])))
+
+    path.prepend(pathlib.Path(os.sep.join(["~", "dino"])))
+    path.remove(os.sep.join(["~", "dino"]))
+
+    assert path == []
+
+
 # helper
 def expand(path):
     return os.path.expanduser(os.path.expandvars(path))
@@ -934,8 +1065,8 @@ def expand(path):
         (b"~/../", "~/../"),
     ],
 )
-def test_env_path_getitem(inp, exp, xonsh_builtins, env):
-    xonsh_builtins.__xonsh__.env = env
+def test_env_path_getitem(inp, exp, xession, env):
+    xession.env = env
     obs = EnvPath(inp)[0]  # call to __getitem__
     if env.get("EXPAND_ENV_VARS"):
         assert expand(exp) == obs
@@ -957,9 +1088,9 @@ def test_env_path_getitem(inp, exp, xonsh_builtins, env):
         ),
     ],
 )
-def test_env_path_multipath(inp, exp, xonsh_builtins, env):
+def test_env_path_multipath(inp, exp, xession, env):
     # cases that involve path-separated strings
-    xonsh_builtins.__xonsh__.env = env
+    xession.env = env
     if env == TOOLS_ENV:
         obs = [i for i in EnvPath(inp)]
         assert [expand(i) for i in exp] == obs
@@ -982,8 +1113,8 @@ def test_env_path_multipath(inp, exp, xonsh_builtins, env):
         (["/home/wakka", pathlib.Path("~/"), "~/"], ["/home/wakka", "~", "~/"]),
     ],
 )
-def test_env_path_with_pathlib_path_objects(inp, exp, xonsh_builtins):
-    xonsh_builtins.__xonsh__.env = TOOLS_ENV
+def test_env_path_with_pathlib_path_objects(inp, exp, xession):
+    xession.env = TOOLS_ENV
     # iterate over EnvPath to acquire all expanded paths
     obs = [i for i in EnvPath(inp)]
     assert [expand(i) for i in exp] == obs
@@ -1331,11 +1462,14 @@ def test_is_logfile_opt(inp, exp):
         pytest.param("/dev/null", "/dev/null", marks=skip_if_on_windows),
         pytest.param(
             "/dev/nonexistent_dev",
-            "/dev/nonexistent_dev"
-            if is_writable_file("/dev/nonexistent_dev")
-            else None,
+            (
+                "/dev/nonexistent_dev"
+                if is_writable_file("/dev/nonexistent_dev")
+                else None
+            ),
             marks=skip_if_on_windows,
         ),
+        ("~/log", os.path.expanduser("~/log")),
     ],
 )
 def test_to_logfile_opt(inp, exp):
@@ -1474,46 +1608,6 @@ def test_partial_string(leaders, prefix, quote):
     assert obs == exp
 
 
-def test_executables_in(xonsh_builtins):
-    expected = set()
-    types = ("file", "directory", "brokensymlink")
-    if ON_WINDOWS:
-        # Don't test symlinks on windows since it requires admin
-        types = ("file", "directory")
-    executables = (True, False)
-    with TemporaryDirectory() as test_path:
-        for _type in types:
-            for executable in executables:
-                fname = "%s_%s" % (_type, executable)
-                if _type == "none":
-                    continue
-                if _type == "file" and executable:
-                    ext = ".exe" if ON_WINDOWS else ""
-                    expected.add(fname + ext)
-                else:
-                    ext = ""
-                path = os.path.join(test_path, fname + ext)
-                if _type == "file":
-                    with open(path, "w") as f:
-                        f.write(fname)
-                elif _type == "directory":
-                    os.mkdir(path)
-                elif _type == "brokensymlink":
-                    tmp_path = os.path.join(test_path, "i_wont_exist")
-                    with open(tmp_path, "w") as f:
-                        f.write("deleteme")
-                        os.symlink(tmp_path, path)
-                    os.remove(tmp_path)
-                if executable and not _type == "brokensymlink":
-                    os.chmod(path, stat.S_IXUSR | stat.S_IRUSR | stat.S_IWUSR)
-            if ON_WINDOWS:
-                xonsh_builtins.__xonsh__.env = PATHEXT_ENV
-                result = set(executables_in(test_path))
-            else:
-                result = set(executables_in(test_path))
-    assert expected == result
-
-
 @pytest.mark.parametrize(
     "inp, exp",
     [
@@ -1541,8 +1635,8 @@ def test_expand_case_matching(inp, exp):
         ("$unk $foo $unk $spam $unk", "$unk bar $unk eggs $unk"),
         ("$an_int$spam$a_bool", "42eggsTrue"),
         ("$unk$an_int$spam$a_bool", "$unk42eggsTrue"),
-        ("bar$foo$spam$foo $an_int $none", "barbareggsbar 42 None"),
-        ("$unk bar$foo$spam$foo $an_int $none", "$unk barbareggsbar 42 None"),
+        ("bar$foo$spam$foo $an_int $none", "barbareggsbar 42 "),
+        ("$unk bar$foo$spam$foo $an_int $none", "$unk barbareggsbar 42 "),
         ("$foo/bar", "bar/bar"),
         ("$unk/$foo/bar", "$unk/bar/bar"),
         ("${'foo'} $spam", "bar eggs"),
@@ -1562,12 +1656,11 @@ def test_expand_case_matching(inp, exp):
         (b"${'unk'}${'foo'}bar", "${'unk'}barbar"),
     ],
 )
-def test_expandvars(inp, exp, xonsh_builtins):
+def test_expandvars(inp, exp, xession):
     """Tweaked for xonsh cases from CPython `test_genericpath.py`"""
-    env = Env(
-        {"foo": "bar", "spam": "eggs", "a_bool": True, "an_int": 42, "none": None}
+    xession.env.update(
+        dict({"foo": "bar", "spam": "eggs", "a_bool": True, "an_int": 42, "none": None})
     )
-    xonsh_builtins.__xonsh__.env = env
     assert expandvars(inp) == exp
 
 
@@ -1589,8 +1682,8 @@ def test_expandvars(inp, exp, xonsh_builtins):
         ),
     ],
 )
-def test_ensure_timestamp(inp, fmt, exp, xonsh_builtins):
-    xonsh_builtins.__xonsh__.env["XONSH_DATETIME_FORMAT"] = "%Y-%m-%d %H:%M"
+def test_ensure_timestamp(inp, fmt, exp, xession):
+    xession.env["XONSH_DATETIME_FORMAT"] = "%Y-%m-%d %H:%M"
     obs = ensure_timestamp(inp, fmt)
     assert exp == obs
 
@@ -1603,18 +1696,17 @@ def test_ensure_timestamp(inp, fmt, exp, xonsh_builtins):
         ("~/$foo", True, "/bar"),
         ("~/test/$a_bool", True, "/test/True"),
         ("~/test/$an_int", True, "/test/42"),
-        ("~/test/$none", True, "/test/None"),
+        ("~/test/$none", True, "/test/"),
         ("~/$foo", False, "/$foo"),
     ],
 )
-def test_expand_path(expand_user, inp, expand_env_vars, exp_end, xonsh_builtins):
+def test_expand_path(expand_user, inp, expand_env_vars, exp_end, xession):
     if os.sep != "/":
         inp = inp.replace("/", os.sep)
         exp_end = exp_end.replace("/", os.sep)
 
-    env = Env({"foo": "bar", "a_bool": True, "an_int": 42, "none": None})
-    env["EXPAND_ENV_VARS"] = expand_env_vars
-    xonsh_builtins.__xonsh__.env = env
+    xession.env.update({"foo": "bar", "a_bool": True, "an_int": 42, "none": None})
+    xession.env["EXPAND_ENV_VARS"] = expand_env_vars
 
     path = expand_path(inp, expand_user=expand_user)
 
@@ -1728,7 +1820,7 @@ def test_deprecated_past_expiry_raises_assertion_error(expired_version):
 
 
 @skip_if_on_windows
-def test_iglobpath_no_dotfiles(xonsh_builtins):
+def test_iglobpath_no_dotfiles(xession):
     d = os.path.dirname(__file__)
     g = d + "/*"
     files = list(iglobpath(g, include_dotfiles=False))
@@ -1736,7 +1828,7 @@ def test_iglobpath_no_dotfiles(xonsh_builtins):
 
 
 @skip_if_on_windows
-def test_iglobpath_dotfiles(xonsh_builtins):
+def test_iglobpath_dotfiles(xession):
     d = os.path.dirname(__file__)
     g = d + "/*"
     files = list(iglobpath(g, include_dotfiles=True))
@@ -1744,7 +1836,7 @@ def test_iglobpath_dotfiles(xonsh_builtins):
 
 
 @skip_if_on_windows
-def test_iglobpath_no_dotfiles_recursive(xonsh_builtins):
+def test_iglobpath_no_dotfiles_recursive(xession):
     d = os.path.dirname(__file__)
     g = d + "/**"
     files = list(iglobpath(g, include_dotfiles=False))
@@ -1752,14 +1844,14 @@ def test_iglobpath_no_dotfiles_recursive(xonsh_builtins):
 
 
 @skip_if_on_windows
-def test_iglobpath_dotfiles_recursive(xonsh_builtins):
+def test_iglobpath_dotfiles_recursive(xession):
     d = os.path.dirname(__file__)
     g = d + "/**"
     files = list(iglobpath(g, include_dotfiles=True))
     assert d + "/bin/.someotherdotfile" in files
 
 
-def test_iglobpath_empty_str(monkeypatch, xonsh_builtins):
+def test_iglobpath_empty_str(monkeypatch, xession):
     # makes sure that iglobpath works, even when os.scandir() and os.listdir()
     # fail to return valid results, like an empty filename
     def mockscandir(path):
@@ -1812,7 +1904,11 @@ def test_all_permutations():
             {"Literal.String.Single": "#ff0000"},
             {"Token.Literal.String.Single": "#ff0000"},
         ),  # short str key
-        ("test4", {"RED": "#ff0000"}, {"Token.Color.RED": "#ff0000"},),  # color
+        (
+            "test4",
+            {"RED": "#ff0000"},
+            {"Token.Color.RED": "#ff0000"},
+        ),  # color
     ],
 )
 def test_register_custom_style(name, styles, refrules):
@@ -1855,7 +1951,15 @@ def test_to_completion_mode(val, exp):
     assert to_completion_mode(val) == exp
 
 
-@pytest.mark.parametrize("val", ["de", "defa_ult", "men_", "menu_",])
+@pytest.mark.parametrize(
+    "val",
+    [
+        "de",
+        "defa_ult",
+        "men_",
+        "menu_",
+    ],
+)
 def test_to_completion_mode_fail(val):
     with pytest.warns(RuntimeWarning):
         obs = to_completion_mode(val)
@@ -1884,14 +1988,14 @@ def test_is_completions_display_value(val, exp):
         (False, "none"),
         ("false", "none"),
         ("single", "single"),
-        ("readline", "single"),
+        ("readline", "readline"),  # todo: check this
         ("multi", "multi"),
         (True, "multi"),
         ("TRUE", "multi"),
     ],
 )
 def test_to_completions_display_value(val, exp):
-    to_completions_display_value(val) == exp
+    assert to_completions_display_value(val) == exp
 
 
 @pytest.mark.parametrize("val", [1, "", "argle"])
@@ -1899,3 +2003,88 @@ def test_to_completions_display_value_fail(val):
     with pytest.warns(RuntimeWarning):
         obs = to_completions_display_value(val)
         assert obs == "multi"
+
+
+def test_is_regex_true():
+    assert is_regex("cat")
+
+
+def test_is_regex_false():
+    assert not is_regex("**")
+
+
+from xonsh.style_tools import Token
+
+
+@pytest.mark.parametrize(
+    "val, exp",
+    [
+        (
+            {
+                Token.Literal.String: "bold ansigreen",
+                "Token.Name.Tag": "underline ansiblue",
+            },
+            True,
+        ),
+        (
+            {
+                Token.Literal.String: "bold ansigreen",
+                1: "bold ansigreen",
+            },
+            False,
+        ),
+        ({1: "bold ansigreen"}, False),
+        (
+            {Token.Literal.String: "123"},
+            False,
+        ),
+        (
+            {"Token.Name.Tag": 123},
+            False,
+        ),
+    ],
+)
+def test_is_tok_color_dict(val, exp):
+    assert is_tok_color_dict(val) == exp
+
+
+def test_print_exception_msg(xession, capsys):
+    xession.env["COLOR_INPUT"] = False
+
+    try:
+        a = 1 / 0
+        a += 1
+    except ZeroDivisionError:
+        print_exception(msg="MSG")
+    cap = capsys.readouterr()
+    assert cap.err.endswith("MSG\n"), f"captured_stderr = {cap.captured_stderr!r}"
+
+
+def test_print_exception_error(xession, capsys):
+    xession.env["COLOR_INPUT"] = False
+
+    with xession.env.swap(XONSH_SHOW_TRACEBACK=False):
+        try:
+            raise subprocess.CalledProcessError(1, ["ls", "nofile"], output="nooutput")
+        except subprocess.CalledProcessError:
+            print_exception(msg="MSG")
+    cap = capsys.readouterr()
+    match = "subprocess.CalledProcessError: Command .* returned non-zero exit status .*\nMSG\n"
+    assert re.match(
+        match,
+        cap.err,
+        re.MULTILINE | re.DOTALL,
+    ), f"\nAssert: {cap.err!r},\nexpected: {match!r}"
+
+    with xession.env.swap(XONSH_SHOW_TRACEBACK=True):
+        try:
+            raise subprocess.CalledProcessError(1, ["ls", "nofile"], output="nooutput")
+        except subprocess.CalledProcessError:
+            print_exception(msg="MSG")
+    cap = capsys.readouterr()
+    match = ".*Traceback.*subprocess.CalledProcessError: Command .* returned non-zero exit status .*MSG\n"
+    assert re.match(
+        match,
+        cap.err,
+        re.MULTILINE | re.DOTALL,
+    ), f"\nAssert: {cap.err!r},\nexpected {match!r}"

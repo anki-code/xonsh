@@ -1,11 +1,12 @@
 """Implements a cat command for xonsh."""
+
 import os
 import sys
 import time
-import builtins
 
 import xonsh.procs.pipelines as xpp
-from xonsh.xoreutils.util import arg_handler
+from xonsh.built_ins import XSH
+from xonsh.xoreutils.util import arg_handler, run_alias
 
 
 def _cat_line(
@@ -39,7 +40,7 @@ def _cat_line(
 
 
 def _cat_single_file(opts, fname, stdin, out, err, line_count=1):
-    env = builtins.__xonsh__.env
+    env = XSH.env
     enc = env.get("XONSH_ENCODING")
     enc_errors = env.get("XONSH_ENCODING_ERRORS")
     read_size = 0
@@ -156,14 +157,9 @@ Examples:
 #      --version  output version information and exit"""
 
 
-def cat_main(args=None):
-    import sys
-    from xonsh.main import setup
-
-    setup()
-    args = sys.argv[1:] if args is None else args
-    cat(args, sys.stdin, sys.stdout, sys.stderr)
+def main(args=None):
+    run_alias("cat", args)
 
 
 if __name__ == "__main__":
-    cat_main()
+    main()

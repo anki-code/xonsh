@@ -1,19 +1,32 @@
 Run Control File
 =========================
-Xonsh allows you to customize your shell behavior with run control files, called "xonshrc" files.  
-These files are written in the xonsh language (a superset of Python) and are executed exactly once at startup.   
+Xonsh allows you to customize your shell behavior with run control files, called "xonshrc" files.
+These files are written either in the Xonsh language (a superset of Python) or in Python and are executed
+exactly once at startup.
+
 The control file usually contains:
 
-* Assignment statements setting `environment variables <envvars.html>`_.  This includes standard OS environment variables that affect other programs and many that Xonsh uses for itself.
-* ``xonfig`` commands to load selected add-ins ("`xontribs<tutorial_xontrib.html#loading-xontribs>`")
-* Xonsh function definitions
+* Assignment statements setting `environment variables <envvars.html>`_. This includes standard OS environment variables that affect other programs and many that Xonsh uses for itself.
+* ``xontrib`` commands to load selected add-ins (`xontribs <tutorial_xontrib.html#loading-xontribs>`_).
+* Xonsh function definitions.
 * `Alias definitions <aliases.html>`_, many of which invoke the above functions with specified arguments.
 
-The system-wide ``xonshrc`` file controls options that are applied to all users of Xonsh on a given system.  
-You can create this file in ``/etc/xonshrc`` for Linux and OSX and in ``%ALLUSERSPROFILE%\xonsh\xonshrc`` on Windows.
+First of all, you need to know about the home directory ``~/.xonshrc`` control file. This file is commonly used to put configurations for the user interactive prompt and it is executed automatically only for interactive Xonsh sessions.
 
-Xonsh also allows a per-user run control file in your home directory, either
-directly in the home directory at ``~/.xonshrc`` or, for XDG compliance, at ``~/.config/rc.xsh``. 
+There are also a few places where Xonsh looks for run control files. These files will be executed automatically in both interactive and non-interactive modes, and you need to use the `$XONSH_INTERACTIVE <envvars.html#xonsh-interactive>`_ and `$XONSH_LOGIN <envvars.html#xonsh-login>`_ environment variables to determine what code you want to execute in each mode. Here is the list of run control files and directories:
+
+* Cross-desktop group (XDG) compliant ``~/.config/xonsh/rc.xsh`` control file.
+* The system-wide control file ``/etc/xonsh/xonshrc`` for Linux and OSX and in ``%ALLUSERSPROFILE%\xonsh\xonshrc`` on Windows. It controls options that are applied to all users of Xonsh on a given system.
+* The home-based directory ``~/.config/xonsh/rc.d/`` and system ``/etc/xonsh/rc.d/`` can contain ``.xsh`` or ``.py`` files. They will be executed at startup in order. This allows for drop-in configuration where your configuration can be split across scripts and common and local configurations more easily separated.
+
+In addition:
+
+* Use ``xonsh --no-rc`` to prevent using control files.
+* Use ``xonsh --rc snail.xsh`` to run only a certain control file.
+* Use ``xonsh -i script.xsh`` to run xonsh in interactive mode with loading all possible control files.
+* Use ``xonsh --rc rc1.xsh rc2.xsh -- script.xsh`` to run scripts with multiple control files.
+* You can create autoloadable `xontrib <tutorial_xontrib.html#loading-xontribs>`_ as alternative to run control file and reuse it as python package.
+
 The options set per user override settings in the system-wide control file.
 
 Xonsh provides 2 wizards to create your own "xonshrc".  ``xonfig web`` provides basic settings, and ``xonfig wizard``
@@ -22,41 +35,41 @@ steps you through all the available options.
 xonfig web
 -----------
 
-This helps you choose a color theme, customized prompt and add-in packages ("xontribs").  It 
+This helps you choose a color theme, customized prompt and add-in packages ("xontribs").  It
 initializes your personal run control file (usually at ``~/.xonshrc``).  To invoke it (from a xonsh prompt):
 
 .. code-block:: xonshcon
-  
-  >>> xonfig web
-  Web config started at 'http://localhost:8421'. Hit Crtl+C to stop.
+
+  @ xonfig web
+  Web config started at 'http://localhost:8421'. Hit Ctrl+C to stop.
   127.0.0.1 - - [23/Aug/2020 15:04:39] "GET / HTTP/1.1" 200 -
 
 This will open your default browser on a page served from a local server.  You can exit the server by typing ``Ctrl+c`` at any time.
 
 The page has:
- 
-:Colors: shows the  color themes built into Xonsh.  
-  Simply click on a sample to select it.  Although color names are standardized across various terminal applications, 
-  their actual appearance is not and do vary widely.  Seeing is believing! 
-:Prompts: shows various sample prompts.  It is recommended to select one but to then edit 
+
+:Colors: shows the  color themes built into Xonsh.
+  Simply click on a sample to select it.  Although color names are standardized across various terminal applications,
+  their actual appearance is not and do vary widely.  Seeing is believing!
+:Prompts: shows various sample prompts.  It is recommended to select one but to then edit
   the ``xonshrc`` file to further refine your prompt.
-:Xontribs: are community-contributed add-ins often used to enhance command completion and line editing, 
-  but can affect any aspect of Xonsh behavior.  
+:Xontribs: are community-contributed add-ins often used to enhance command completion and line editing,
+  but can affect any aspect of Xonsh behavior.
   Choose one or more to suit your needs but note that they will require installation of additional
   packages.  You can extend Xonsh by `writing your own xontrib <tutorial_xontrib.html>`_, and are invited/urged to do so!
-:Save: Click to write the configuration choices to your ``~/.xonshrc``. This will add a few tagged lines to your run control file, but will not 
+:Save: Click to write the configuration choices to your ``~/.xonshrc``. This will add a few tagged lines to your run control file, but will not
   overwrite it completely, so you can run `xonfig web` at any time.
 
 xonfig wizard
 --------------
 
-This imports settings and tools you have defined in your existing (ordinary) shell such as ``bash``.  
-It also walks you through setting all known environment variables and xontribs 
+This imports settings and tools you have defined in your existing (ordinary) shell such as ``bash``.
+It also walks you through setting all known environment variables and xontribs
 in a question-and-answer format:
 
 .. code-block:: xonshcon
 
-    $ xonfig wizard
+    @ xonfig wizard
 
               Welcome to the xonsh configuration wizard!
               ------------------------------------------
@@ -65,7 +78,7 @@ in a question-and-answer format:
     wizard if the configuration file does not exist. However, you can
     always rerun this wizard with the xonfig command:
 
-        $ xonfig wizard
+        @ xonfig wizard
 
     This wizard will load an existing configuration, if it is available.
     Also never fear when this wizard saves its results! It will create
@@ -161,6 +174,19 @@ The following is a real-world example of such a file.
 .. include:: xonshrc.xsh
     :code: xonsh
 
+See also `xontrib-rc-awesome <https://github.com/anki-code/xontrib-rc-awesome>`_.
+
+Real world sample rc.py
+-------------------------
+
+The following is a real-world example of such a file.
+This can be set by ``env XONSHRC=rc.py xonsh`` or ``xonsh --rc=rc.py``
+
+:download:`Download rc.py <xonshrc.py>`
+
+.. include:: xonshrc.py
+    :code: xonsh
+
 
 Snippets for xonshrc
 --------------------
@@ -179,8 +205,8 @@ The following snippet reimplements the formatter also to include untracked files
 
 .. code-block:: xonshcon
 
-    >>> from xonsh.prompt.vc import git_dirty_working_directory
-    >>> $PROMPT_FIELDS['branch_color'] = lambda: ('{BOLD_INTENSE_RED}'
+    from xonsh.prompt.vc import git_dirty_working_directory
+    $PROMPT_FIELDS['branch_color'] = lambda: ('{BOLD_INTENSE_RED}'
                                                    if git_dirty_working_directory(include_untracked=True)
                                                    else '{BOLD_INTENSE_GREEN}')
 
@@ -194,64 +220,33 @@ The colors of the ``ls`` command may be hard to read in a dark terminal. If so, 
 
 .. code-block:: xonshcon
 
-    >>> $LS_COLORS='rs=0:di=01;36:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:su=37;41:sg=30;43:ca=30;41:tw=30;42:ow=34;42:st=37;44:ex=01;32:'
-    
+    $LS_COLORS='rs=0:di=01;36:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:su=37;41:sg=30;43:ca=30;41:tw=30;42:ow=34;42:st=37;44:ex=01;32:'
+
 Make JSON data directly pastable
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-With the following snippet, xonsh will understand JSON data such as ``{ "name": "Tyler", "active": false, "age": null }``. 
+With the following snippet, xonsh will understand JSON data such as ``{ "name": "Tyler", "active": false, "age": null }``.
 Note that, though practical, this is rather hacky and might break other functionality. Use at your own risk.
 
 .. code-block:: xonshcon
 
-    >>> import builtins 
-    >>> builtins.true = True
-    >>> builtins.false = False
-    >>> builtins.null = None
-    
+    import builtins
+    builtins.true = True
+    builtins.false = False
+    builtins.null = None
+
 Display different date information every 10th time
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 For a compact shell prompts, some people prefer a very condensed time format. But when you have a lengthy shell session you might want the date to show up in your logs every now and then...
 
 .. code-block:: xonshcon
 
-    >>> import time
-    >>> def get_shelldate():
-    >>>     get_shelldate.fulldate %= 10 
-    >>>     get_shelldate.fulldate += 1
-    >>>     if get_shelldate.fulldate == 1:
-    >>>         return time.strftime('%d%m%Y')
-    >>>     return time.strftime('%H:%M')
-    >>> get_shelldate.fulldate = 0
-    >>> 
-    >>> $PROMPT_FIELDS['shelldate'] = get_shelldate
-    
-Use the Nix Package manager with Xonsh
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-To users of the `Nix Package Manager <https://www.nixos.org/>`_ these few lines might be life-savers:
+    import time
+    def get_shelldate():
+        get_shelldate.fulldate %= 10
+        get_shelldate.fulldate += 1
+        if get_shelldate.fulldate == 1:
+            return time.strftime('%d%m%Y')
+        return time.strftime('%H:%M')
+    get_shelldate.fulldate = 0
 
-.. code-block:: xonshcon
-
-    >>> import os.path
-    >>> if os.path.exists(f"{$HOME}/.nix-profile") and not __xonsh__.env.get("NIX_PATH"):
-    >>>     $NIX_REMOTE="daemon"
-    >>>     $NIX_USER_PROFILE_DIR="/nix/var/nix/profiles/per-user/" + $USER
-    >>>     $NIX_PROFILES="/nix/var/nix/profiles/default " + $HOME + "/.nix-profile"
-    >>>     $NIX_SSL_CERT_FILE="/etc/ssl/certs/ca-certificates.crt"
-    >>>     $NIX_PATH="nixpkgs=/nix/var/nix/profiles/per-user/root/channels/nixpkgs:/nix/var/nix/profiles/per-user/root/channels"
-    >>>     $PATH += [f"{$HOME}/.nix-profile/bin", "/nix/var/nix/profiles/default/bin"]
-
-Btw. a hacky solution to install xontribs that do not yet ship with ``nixpkgs`` is: 
-
-.. code-block:: xonshcon
-
-    >>> for p in map(lambda s: str(s.resolve()), p"~/.local/lib/".glob("python*/site-packages")):
-    >>>     if p not in sys.path:
-    >>>         sys.path.append(p)
-    >>> 
-    >>> $PYTHONPATH = "$USER/.local/lib/python3.7/site-packages"
-    >>>     
-    >>> python -m ensurepip --user
-    >>> xonsh
-    >>> python -m pip install --user -U pip xontrib-z xonsh-direnv
-
-Just run the last three lines, do not put them in your `xonshrc`!
+    $PROMPT_FIELDS['shelldate'] = get_shelldate

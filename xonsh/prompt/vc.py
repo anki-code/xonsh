@@ -1,18 +1,19 @@
-# -*- coding: utf-8 -*-
 """Prompt formatter for simple version control branches"""
-# pylint:disable=no-member, invalid-name
 
+# pylint:disable=no-member, invalid-name
+import contextlib
 import os
-import sys
-import queue
-import builtins
-import threading
-import subprocess
-import re
 import pathlib
+import queue
+import re
+import subprocess
+import sys
+import threading
 
 import xonsh.tools as xt
-from xonsh.lazyasd import LazyObject
+from xonsh.built_ins import XSH
+from xonsh.lib.lazyasd import LazyObject
+from xonsh.procs.executables import locate_executable
 
 RE_REMOVE_ANSI = LazyObject(
     lambda: re.compile(r"(?:\x1B[@-_]|[\x80-\x9F])[0-?]*[ -/]*[@-~]"),
@@ -24,20 +25,24 @@ RE_REMOVE_ANSI = LazyObject(
 def _run_git_cmd(cmd):
     # create a safe detyped env dictionary and update with the additional git environment variables
     # when running git status commands we do not want to acquire locks running command like git status
-    denv = dict(builtins.__xonsh__.env.detype())
+    denv = dict(XSH.env.detype())
     denv.update({"GIT_OPTIONAL_LOCKS": "0"})
     return subprocess.check_output(cmd, env=denv, stderr=subprocess.DEVNULL)
 
 
 def _get_git_branch(q):
-    try:
-        cmd = ["git", "rev-parse", "--abbrev-ref", "HEAD"]
-        branch = xt.decode_bytes(_run_git_cmd(cmd))
-        branch = branch.splitlines()[0] or None
-    except (subprocess.CalledProcessError, OSError, FileNotFoundError):
-        q.put(None)
-    else:
-        q.put(branch)
+    # from https://git-blame.blogspot.com/2013/06/checking-current-branch-programatically.html
+    for cmds in [
+        "git symbolic-ref --short HEAD",
+        "git show-ref --head -s --abbrev",  # in detached mode return sha1
+    ]:
+        with contextlib.suppress(subprocess.CalledProcessError, OSError):
+            branch = xt.decode_bytes(_run_git_cmd(cmds.split()))
+            if branch:
+                q.put(branch.splitlines()[0])
+                return
+    # all failed
+    q.put(None)
 
 
 def get_git_branch():
@@ -45,7 +50,7 @@ def get_git_branch():
     be determined (timeout, not in a git repo, etc.) then this returns None.
     """
     branch = None
-    timeout = builtins.__xonsh__.env.get("VC_BRANCH_TIMEOUT")
+    timeout = XSH.env.get("VC_BRANCH_TIMEOUT")
     q = queue.Queue()
 
     t = threading.Thread(target=_get_git_branch, args=(q,))
@@ -61,7 +66,7 @@ def get_git_branch():
 
 
 def _get_hg_root(q):
-    _curpwd = builtins.__xonsh__.env["PWD"]
+    _curpwd = XSH.env["PWD"]
     while True:
         if not os.path.isdir(_curpwd):
             return False
@@ -83,7 +88,7 @@ def get_hg_branch(root=None):
     """Try to get the mercurial branch of the current directory,
     return None if not in a repo or subprocess.TimeoutExpired if timed out.
     """
-    env = builtins.__xonsh__.env
+    env = XSH.env
     timeout = env["VC_BRANCH_TIMEOUT"]
     q = queue.Queue()
     t = threading.Thread(target=_get_hg_root, args=(q,))
@@ -97,7 +102,7 @@ def get_hg_branch(root=None):
         # get branch name
         branch_path = root / ".hg" / "branch"
         if branch_path.exists():
-            with open(branch_path, "r") as branch_file:
+            with open(branch_path) as branch_file:
                 branch = branch_file.read().strip()
         else:
             branch = "default"
@@ -121,12 +126,33 @@ def get_hg_branch(root=None):
     return branch
 
 
+def _run_fossil_cmd(cmd):
+    timeout = XSH.env.get("VC_BRANCH_TIMEOUT")
+    result = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=timeout)
+    return result
+
+
+def get_fossil_branch():
+    """Attempts to find the current fossil branch. If this could not
+    be determined (timeout, not in a fossil checkout, etc.) then this returns None.
+    """
+    # from fossil branch --help: "fossil branch current: Print the name of the branch for the current check-out"
+    cmd = "fossil branch current".split()
+    try:
+        branch = xt.decode_bytes(_run_fossil_cmd(cmd))
+    except (subprocess.CalledProcessError, OSError):
+        branch = None
+    else:
+        branch = RE_REMOVE_ANSI.sub("", branch.splitlines()[0])
+    return branch
+
+
 _FIRST_BRANCH_TIMEOUT = True
 
 
 def _first_branch_timeout_message():
     global _FIRST_BRANCH_TIMEOUT
-    sbtm = builtins.__xonsh__.env["SUPPRESS_BRANCH_TIMEOUT_MESSAGE"]
+    sbtm = XSH.env["SUPPRESS_BRANCH_TIMEOUT_MESSAGE"]
     if not _FIRST_BRANCH_TIMEOUT or sbtm:
         return
     _FIRST_BRANCH_TIMEOUT = False
@@ -143,17 +169,13 @@ def _first_branch_timeout_message():
 
 
 def _vc_has(binary):
-    """ This allows us to locate binaries after git only if necessary """
-    cmds = builtins.__xonsh__.commands_cache
-    if cmds.is_empty():
-        return bool(cmds.locate_binary(binary, ignore_alias=True))
-    else:
-        return bool(cmds.lazy_locate_binary(binary, ignore_alias=True))
+    """This allows us to locate binaries after git only if necessary"""
+    return bool(locate_executable(binary))
 
 
 def current_branch():
     """Gets the branch for a current working directory. Returns an empty string
-    if the cwd is not a repository.  This currently only works for git and hg
+    if the cwd is not a repository.  This currently only works for git, hg, and fossil
     and should be extended in the future.  If a timeout occurred, the string
     '<branch-timeout>' is returned.
     """
@@ -162,6 +184,8 @@ def current_branch():
         branch = get_git_branch()
     if not branch and _vc_has("hg"):
         branch = get_hg_branch()
+    if not branch and _vc_has("fossil"):
+        branch = get_fossil_branch()
     if isinstance(branch, subprocess.TimeoutExpired):
         branch = "<branch-timeout>"
         _first_branch_timeout_message()
@@ -180,7 +204,7 @@ def _git_dirty_working_directory(q, include_untracked):
             q.put(bool(status))
         else:
             q.put(None)
-    except (subprocess.CalledProcessError, OSError, FileNotFoundError):
+    except (subprocess.CalledProcessError, OSError):
         q.put(None)
 
 
@@ -188,7 +212,7 @@ def git_dirty_working_directory():
     """Returns whether or not the git directory is dirty. If this could not
     be determined (timeout, file not found, etc.) then this returns None.
     """
-    env = builtins.__xonsh__.env
+    env = XSH.env
     timeout = env.get("VC_BRANCH_TIMEOUT")
     include_untracked = env.get("VC_GIT_INCLUDE_UNTRACKED")
     q = queue.Queue()
@@ -207,7 +231,7 @@ def hg_dirty_working_directory():
     """Computes whether or not the mercurial working directory is dirty or not.
     If this cannot be determined, None is returned.
     """
-    env = builtins.__xonsh__.env
+    env = XSH.env
     cwd = env["PWD"]
     denv = env.detype()
     vcbt = env["VC_BRANCH_TIMEOUT"]
@@ -219,7 +243,7 @@ def hg_dirty_working_directory():
             stderr=subprocess.PIPE,
             cwd=cwd,
             timeout=vcbt,
-            universal_newlines=True,
+            text=True,
             env=denv,
         )
         return s.strip(os.linesep).endswith("+")
@@ -229,6 +253,20 @@ def hg_dirty_working_directory():
         FileNotFoundError,
     ):
         return None
+
+
+def fossil_dirty_working_directory():
+    """Returns whether the fossil checkout is dirty. If this could not
+    be determined (timeout, file not found, etc.) then this returns None.
+    """
+    cmd = ["fossil", "changes"]
+    try:
+        status = _run_fossil_cmd(cmd)
+    except (subprocess.CalledProcessError, OSError):
+        status = None
+    else:
+        status = bool(status)
+    return status
 
 
 def dirty_working_directory():
@@ -241,6 +279,8 @@ def dirty_working_directory():
         dwd = git_dirty_working_directory()
     if dwd is None and _vc_has("hg"):
         dwd = hg_dirty_working_directory()
+    if dwd is None and _vc_has("fossil"):
+        dwd = fossil_dirty_working_directory()
     return dwd
 
 

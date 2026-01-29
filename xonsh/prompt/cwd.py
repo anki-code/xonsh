@@ -1,35 +1,28 @@
-# -*- coding: utf-8 -*-
 """CWD related prompt formatter"""
 
 import os
 import shutil
-import builtins
 
-import xonsh.tools as xt
 import xonsh.platform as xp
+import xonsh.tools as xt
+from xonsh.built_ins import XSH
 
 
-def _replace_home(x):
+def _replace_home(x: str):
+    home = os.path.expanduser("~")
+    if x.startswith(home):
+        x = x.replace(home, "~", 1)
+
     if xp.ON_WINDOWS:
-        home = (
-            builtins.__xonsh__.env["HOMEDRIVE"] + builtins.__xonsh__.env["HOMEPATH"][0]
-        )
-        if x.startswith(home):
-            x = x.replace(home, "~", 1)
-
-        if builtins.__xonsh__.env.get("FORCE_POSIX_PATHS"):
+        if XSH.env.get("FORCE_POSIX_PATHS") and os.altsep:
             x = x.replace(os.sep, os.altsep)
 
-        return x
-    else:
-        home = builtins.__xonsh__.env["HOME"]
-        if x.startswith(home):
-            x = x.replace(home, "~", 1)
-        return x
+    return x
 
 
 def _replace_home_cwd():
-    return _replace_home(builtins.__xonsh__.env["PWD"])
+    pwd = XSH.env["PWD"].replace("{", "{{").replace("}", "}}")
+    return _replace_home(pwd)
 
 
 def _collapsed_pwd():
@@ -50,8 +43,8 @@ def _dynamically_collapsed_pwd():
     environment variable DYNAMIC_CWD_WIDTH.
     """
     original_path = _replace_home_cwd()
-    target_width, units = builtins.__xonsh__.env["DYNAMIC_CWD_WIDTH"]
-    elision_char = builtins.__xonsh__.env["DYNAMIC_CWD_ELISION_CHAR"]
+    target_width, units = XSH.env["DYNAMIC_CWD_WIDTH"]
+    elision_char = XSH.env["DYNAMIC_CWD_ELISION_CHAR"]
     if target_width == float("inf"):
         return original_path
     if units == "%":

@@ -1,46 +1,44 @@
-# -*- coding: utf-8 -*-
 """Testing dirstack"""
-from __future__ import unicode_literals, print_function
 
-from contextlib import contextmanager
 import os
 
 import pytest  # noqa F401
 
 from xonsh import dirstack
-from xonsh.environ import Env
-
+from xonsh.tools import chdir
 
 HERE = os.path.abspath(os.path.dirname(__file__))
 PARENT = os.path.dirname(HERE)
 
 
-@contextmanager
-def chdir(adir):
-    old_dir = os.getcwd()
-    os.chdir(adir)
-    yield
-    os.chdir(old_dir)
-
-
-def test_simple(xonsh_builtins):
-    xonsh_builtins.__xonsh__.env = Env(CDPATH=PARENT, PWD=PARENT)
+def test_simple(xession):
+    xession.env.update(dict(CDPATH=PARENT, PWD=PARENT))
     with chdir(PARENT):
         assert os.getcwd() != HERE
         dirstack.cd(["tests"])
         assert os.getcwd() == HERE
 
 
-def test_cdpath_simple(xonsh_builtins):
-    xonsh_builtins.__xonsh__.env = Env(CDPATH=PARENT, PWD=HERE)
+def test_chdir_mkdir(tmpdir):
+    d = str(tmpdir.join("chdir_mkdir"))
+    with chdir(d, mkdir=True):
+        assert os.getcwd() == d
+    assert os.getcwd() != d
+    with chdir(d, mkdir=True):
+        # Repeat to check there is no error for existing dir.
+        assert os.getcwd() == d
+
+
+def test_cdpath_simple(xession):
+    xession.env.update(dict(CDPATH=PARENT, PWD=HERE))
     with chdir(os.path.normpath("/")):
         assert os.getcwd() != HERE
         dirstack.cd(["tests"])
         assert os.getcwd() == HERE
 
 
-def test_cdpath_collision(xonsh_builtins):
-    xonsh_builtins.__xonsh__.env = Env(CDPATH=PARENT, PWD=HERE)
+def test_cdpath_collision(xession):
+    xession.env.update(dict(CDPATH=PARENT, PWD=HERE))
     sub_tests = os.path.join(HERE, "tests")
     if not os.path.exists(sub_tests):
         os.mkdir(sub_tests)
@@ -50,8 +48,8 @@ def test_cdpath_collision(xonsh_builtins):
         assert os.getcwd() == os.path.join(HERE, "tests")
 
 
-def test_cdpath_expansion(xonsh_builtins):
-    xonsh_builtins.__xonsh__.env = Env(HERE=HERE, CDPATH=("~", "$HERE"))
+def test_cdpath_expansion(xession):
+    xession.env.update(dict(HERE=HERE, CDPATH=("~", "$HERE")))
     test_dirs = (
         os.path.join(HERE, "xonsh-test-cdpath-here"),
         os.path.expanduser("~/xonsh-test-cdpath-home"),
@@ -60,22 +58,22 @@ def test_cdpath_expansion(xonsh_builtins):
         for d in test_dirs:
             if not os.path.exists(d):
                 os.mkdir(d)
-            assert os.path.exists(
-                dirstack._try_cdpath(d)
-            ), "dirstack._try_cdpath: could not resolve {0}".format(d)
+            assert os.path.exists(dirstack._try_cdpath(d)), (
+                f"dirstack._try_cdpath: could not resolve {d}"
+            )
     finally:
         for d in test_dirs:
             if os.path.exists(d):
                 os.rmdir(d)
 
 
-def test_cdpath_events(xonsh_builtins, tmpdir):
-    xonsh_builtins.__xonsh__.env = Env(CDPATH=PARENT, PWD=os.getcwd())
+def test_cdpath_events(xession, tmpdir):
+    xession.env.update(dict(CDPATH=PARENT, PWD=os.getcwd()))
     target = str(tmpdir)
 
     ev = None
 
-    @xonsh_builtins.events.on_chdir
+    @xession.builtins.events.on_chdir
     def handler(olddir, newdir, **kw):
         nonlocal ev
         ev = olddir, newdir
@@ -92,8 +90,8 @@ def test_cdpath_events(xonsh_builtins, tmpdir):
         os.chdir(old_dir)
 
 
-def test_cd_autopush(xonsh_builtins, tmpdir):
-    xonsh_builtins.__xonsh__.env = Env(CDPATH=PARENT, PWD=os.getcwd(), AUTO_PUSHD=True)
+def test_cd_autopush(xession, tmpdir):
+    xession.env.update(dict(CDPATH=PARENT, PWD=os.getcwd(), AUTO_PUSHD=True))
     target = str(tmpdir)
 
     old_dir = os.getcwd()
@@ -113,3 +111,16 @@ def test_cd_autopush(xonsh_builtins, tmpdir):
             dirstack.popd([])
 
     assert old_dir == os.getcwd()
+
+
+def test_cd_home(xession, tmpdir):
+    target = str(tmpdir)
+
+    old_home = xession.env.get("HOME")
+
+    xession.env.update(dict(HOME=target, PWD=os.getcwd(), AUTO_PUSHD=True))
+    dirstack.cd([])
+    assert target == os.getcwd()
+    dirstack.popd([])
+
+    xession.env.update(dict(HOME=old_home))

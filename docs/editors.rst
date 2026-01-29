@@ -3,19 +3,37 @@
 Editor and IDE Support
 ======================
 
-.. contents::
-   :local:
+Sublime Text
+============
+There is a `xonsh package`_ for **Sublime Text 4** (build > 4075). To install:
 
-Visual Studio Code (VSCode)
-===========================
-There is `xonsh extension for VSCode`_. To install search "xonsh" using extensions
+- Via **Package Control**: open (``^``/``⌘`` ``⇧`` ``P``) ``Command Palette`` → ``Package Control: Install Package`` → ``xonsh``
+- **Manually**: clone the repository to your `Sublime Text packages`_ directory and rename it to ``xonsh``
+
+  .. code-block:: sh
+
+    cd /path/to/sublime/packages/directory
+    git clone https://github.com/eugenesvk/sublime-xonsh.git
+    mv sublime-xonsh xonsh
+
+.. _xonsh package: https://packagecontrol.io/packages/xonsh
+.. _Sublime Text packages: https://www.sublimetext.com/docs/packages.html
+
+
+Visual Studio Code (VS Code)
+============================
+There is `xonsh extension for VS Code`_. To install search "xonsh" using extensions
 menu or just press ``F1`` and run without `>` preceding:
 
 .. code-block::
 
     ext install jnoortheen.xonsh
 
-.. _xonsh extension for VSCode: https://marketplace.visualstudio.com/items?itemName=jnoortheen.xonsh
+.. https://github.com/microsoft/vscode/issues/200374
+
+Since version 1.86 of VS Code, the editor also supports loading the environment for users with xonsh as their default shell.
+
+.. _xonsh extension for VS Code: https://marketplace.visualstudio.com/items?itemName=jnoortheen.xonsh
 
 
 Emacs
@@ -44,7 +62,7 @@ Xonsh Comint buffer
 You can use xonsh as your `interactive shell in Emacs
 <https://www.gnu.org/software/emacs/manual/html_node/emacs/Interactive-Shell.html>`_
 in a Comint buffer. This way you keep all the Emacs editing power
-in the shell, but you loose xonsh's completion feature.
+in the shell, but you lose xonsh's completion feature.
 
 Make sure you install xonsh with readline support and in your
 ``.xonshrc`` file define

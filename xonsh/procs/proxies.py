@@ -6,22 +6,21 @@ The contents of `subprocess.py` (and, thus, the reproduced methods) are
 Copyright (c) 2003-2005 by Peter Astrand <astrand@lysator.liu.se> and were
 licensed to the Python Software foundation under a Contributor Agreement.
 """
-import os
-import io
-import sys
-import time
-import signal
-import inspect
-import builtins
-import functools
-import threading
-import subprocess
+
 import collections.abc as cabc
+import io
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
 
-import xonsh.tools as xt
+import xonsh.lib.lazyimps as xli
 import xonsh.platform as xp
-import xonsh.lazyimps as xli
-
+import xonsh.tools as xt
+from xonsh.built_ins import XSH
+from xonsh.cli_utils import run_with_partial_args
 from xonsh.procs.readers import safe_fdclose
 
 
@@ -274,7 +273,7 @@ def parse_proxy_return(r, stdout, stderr):
             stdout.write(str(r[0]))
             stdout.flush()
         if rlen > 1 and r[1] is not None:
-            stderr.write(str(r[1]))
+            stderr.write(xt.endswith_newline(str(r[1])))
             stderr.flush()
         if rlen > 2 and isinstance(r[2], int):
             cmd_result = r[2]
@@ -285,62 +284,16 @@ def parse_proxy_return(r, stdout, stderr):
     return cmd_result
 
 
-def proxy_zero(f, args, stdin, stdout, stderr, spec, stack):
-    """Calls a proxy function which takes no parameters."""
-    return f()
-
-
-def proxy_one(f, args, stdin, stdout, stderr, spec, stack):
-    """Calls a proxy function which takes one parameter: args"""
-    return f(args)
-
-
-def proxy_two(f, args, stdin, stdout, stderr, spec, stack):
-    """Calls a proxy function which takes two parameter: args and stdin."""
-    return f(args, stdin)
-
-
-def proxy_three(f, args, stdin, stdout, stderr, spec, stack):
-    """Calls a proxy function which takes three parameter: args, stdin, stdout."""
-    return f(args, stdin, stdout)
-
-
-def proxy_four(f, args, stdin, stdout, stderr, spec, stack):
-    """Calls a proxy function which takes four parameter: args, stdin, stdout,
-    and stderr.
-    """
-    return f(args, stdin, stdout, stderr)
-
-
-def proxy_five(f, args, stdin, stdout, stderr, spec, stack):
-    """Calls a proxy function which takes four parameter: args, stdin, stdout,
-    stderr, and spec.
-    """
-    return f(args, stdin, stdout, stderr, spec)
-
-
-PROXIES = (proxy_zero, proxy_one, proxy_two, proxy_three, proxy_four, proxy_five)
-
-
-def partial_proxy(f):
-    """Dispatches the appropriate proxy function based on the number of args."""
-    numargs = 0
-    for name, param in inspect.signature(f).parameters.items():
-        if (
-            param.kind == param.POSITIONAL_ONLY
-            or param.kind == param.POSITIONAL_OR_KEYWORD
-        ):
-            numargs += 1
-        elif name in xt.ALIAS_KWARG_NAMES and param.kind == param.KEYWORD_ONLY:
-            numargs += 1
-    if numargs < 6:
-        return functools.partial(PROXIES[numargs], f)
-    elif numargs == 6:
-        # don't need to partial.
-        return f
-    else:
-        e = "Expected proxy with 6 or fewer arguments for {}, not {}"
-        raise xt.XonshError(e.format(", ".join(xt.ALIAS_KWARG_NAMES), numargs))
+def get_proc_proxy_name(cls):
+    return repr(
+        {
+            "cls": cls.__class__.__name__,
+            "name": getattr(cls, "name", None),
+            "func": cls.f,
+            "alias": cls.env.get("__ALIAS_NAME", None),
+            "pid": cls.pid,
+        }
+    )
 
 
 class ProcProxyThread(threading.Thread):
@@ -387,8 +340,7 @@ class ProcProxyThread(threading.Thread):
         env : Mapping, optional
             Environment mapping.
         """
-        self.orig_f = f
-        self.f = partial_proxy(f)
+        self.f = f
         self.args = args
         self.pid = None
         self.returncode = None
@@ -409,7 +361,7 @@ class ProcProxyThread(threading.Thread):
         self.stdout = stdout
         self.stderr = stderr
         self.close_fds = close_fds
-        self.env = env or builtins.__xonsh__.env
+        self.env = env
         self._interrupted = False
 
         if xp.ON_WINDOWS:
@@ -421,21 +373,21 @@ class ProcProxyThread(threading.Thread):
                 self.errread = xli.msvcrt.open_osfhandle(self.errread.Detach(), 0)
 
         if self.p2cwrite != -1:
-            self.stdin = io.open(self.p2cwrite, "wb", -1)
+            self.stdin = open(self.p2cwrite, "wb", -1)
             if universal_newlines:
                 self.stdin = io.TextIOWrapper(
                     self.stdin, write_through=True, line_buffering=False
                 )
         elif isinstance(stdin, int) and stdin != 0:
-            self.stdin = io.open(stdin, "wb", -1)
+            self.stdin = open(stdin, "wb", -1)
 
         if self.c2pread != -1:
-            self.stdout = io.open(self.c2pread, "rb", -1)
+            self.stdout = open(self.c2pread, "rb", -1)
             if universal_newlines:
                 self.stdout = io.TextIOWrapper(self.stdout)
 
         if self.errread != -1:
-            self.stderr = io.open(self.errread, "rb", -1)
+            self.stderr = open(self.errread, "rb", -1)
             if universal_newlines:
                 self.stderr = io.TextIOWrapper(self.stderr)
 
@@ -446,6 +398,8 @@ class ProcProxyThread(threading.Thread):
             self.old_int_handler = signal.signal(signal.SIGINT, self._signal_int)
         # start up the proc
         super().__init__()
+        # This is so the thread will use the same swapped values as the origin one.
+        self.original_swapped_values = XSH.env.get_swapped_values()
         self.start()
 
     def __del__(self):
@@ -458,12 +412,14 @@ class ProcProxyThread(threading.Thread):
         """
         if self.f is None:
             return
+        # Set the thread-local swapped values.
+        XSH.env.set_swapped_values(self.original_swapped_values)
         spec = self._wait_and_getattr("spec")
         last_in_pipeline = spec.last_in_pipeline
         if last_in_pipeline:
             capout = spec.captured_stdout  # NOQA
             caperr = spec.captured_stderr  # NOQA
-        env = builtins.__xonsh__.env
+        env = XSH.env
         enc = env.get("XONSH_ENCODING")
         err = env.get("XONSH_ENCODING_ERRORS")
         if xp.ON_WINDOWS:
@@ -478,14 +434,14 @@ class ProcProxyThread(threading.Thread):
             sp_stdin = None
         elif self.p2cread != -1:
             sp_stdin = io.TextIOWrapper(
-                io.open(self.p2cread, "rb", -1), encoding=enc, errors=err
+                open(self.p2cread, "rb", -1), encoding=enc, errors=err
             )
         else:
             sp_stdin = sys.stdin
         # stdout
         if self.c2pwrite != -1:
             sp_stdout = io.TextIOWrapper(
-                io.open(self.c2pwrite, "wb", -1), encoding=enc, errors=err
+                open(self.c2pwrite, "wb", -1), encoding=enc, errors=err
             )
         else:
             sp_stdout = sys.stdout
@@ -494,18 +450,34 @@ class ProcProxyThread(threading.Thread):
             sp_stderr = sp_stdout
         elif self.errwrite != -1:
             sp_stderr = io.TextIOWrapper(
-                io.open(self.errwrite, "wb", -1), encoding=enc, errors=err
+                open(self.errwrite, "wb", -1), encoding=enc, errors=err
             )
         else:
             sp_stderr = sys.stderr
         # run the function itself
         try:
-            with STDOUT_DISPATCHER.register(sp_stdout), STDERR_DISPATCHER.register(
-                sp_stderr
-            ), xt.redirect_stdout(STDOUT_DISPATCHER), xt.redirect_stderr(
-                STDERR_DISPATCHER
+            alias_stack = XSH.env.get("__ALIAS_STACK", "")
+            if self.env and self.env.get("__ALIAS_NAME"):
+                alias_stack += ":" + self.env["__ALIAS_NAME"]
+
+            with (
+                STDOUT_DISPATCHER.register(sp_stdout),
+                STDERR_DISPATCHER.register(sp_stderr),
+                xt.redirect_stdout(STDOUT_DISPATCHER),
+                xt.redirect_stderr(STDERR_DISPATCHER),
+                XSH.env.swap(self.env, __ALIAS_STACK=alias_stack),
             ):
-                r = self.f(self.args, sp_stdin, sp_stdout, sp_stderr, spec, spec.stack)
+                r = run_with_partial_args(
+                    self.f,
+                    {
+                        "args": self.args,
+                        "stdin": sp_stdin,
+                        "stdout": sp_stdout,
+                        "stderr": sp_stderr,
+                        "spec": spec,
+                        "stack": spec.stack,
+                    },
+                )
         except SystemExit as e:
             r = e.code if isinstance(e.code, int) else int(bool(e.code))
         except OSError:
@@ -513,7 +485,9 @@ class ProcProxyThread(threading.Thread):
             if status:
                 # stdout and stderr are still writable, so error must
                 # come from function itself.
-                xt.print_exception()
+                xt.print_exception(
+                    source_msg="Exception in thread " + get_proc_proxy_name(self)
+                )
                 r = 1
             else:
                 # stdout and stderr are no longer writable, so error must
@@ -523,7 +497,9 @@ class ProcProxyThread(threading.Thread):
                 # is not truly an error and we should exit gracefully.
                 r = 0
         except Exception:
-            xt.print_exception()
+            xt.print_exception(
+                source_msg="Exception in thread " + get_proc_proxy_name(self)
+            )
             r = 1
         safe_flush(sp_stdout)
         safe_flush(sp_stderr)
@@ -535,7 +511,10 @@ class ProcProxyThread(threading.Thread):
         # clean up
         # scopz: not sure why this is needed, but stdin cannot go here
         # and stdout & stderr must.
-        handles = [self.stdout, self.stderr]
+        if xp.ON_WINDOWS:
+            handles = [self.stdout, self.stderr]
+        else:
+            handles = [sp_stdout, sp_stderr]
         for handle in handles:
             safe_fdclose(handle, cache=self._closed_handle_cache)
 
@@ -763,8 +742,7 @@ class ProcProxy:
         close_fds=False,
         env=None,
     ):
-        self.orig_f = f
-        self.f = partial_proxy(f)
+        self.f = f
         self.args = args
         self.pid = os.getpid()
         self.returncode = None
@@ -785,7 +763,7 @@ class ProcProxy:
         """
         if self.f is None:
             return 0
-        env = builtins.__xonsh__.env
+        env = XSH.env
         enc = env.get("XONSH_ENCODING")
         err = env.get("XONSH_ENCODING_ERRORS")
         spec = self._wait_and_getattr("spec")
@@ -794,7 +772,7 @@ class ProcProxy:
             stdin = None
         else:
             if isinstance(self.stdin, int):
-                inbuf = io.open(self.stdin, "rb", -1)
+                inbuf = open(self.stdin, "rb", -1)
             else:
                 inbuf = self.stdin
             stdin = io.TextIOWrapper(inbuf, encoding=enc, errors=err)
@@ -802,9 +780,24 @@ class ProcProxy:
         stderr = self._pick_buf(self.stderr, sys.stderr, enc, err)
         # run the actual function
         try:
-            r = self.f(self.args, stdin, stdout, stderr, spec, spec.stack)
+            with XSH.env.swap(self.env):
+                r = run_with_partial_args(
+                    self.f,
+                    {
+                        "args": self.args,
+                        "stdin": stdin,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "spec": spec,
+                        "stack": spec.stack,
+                    },
+                )
+        except SystemExit as e:
+            # the alias function is running in the main thread, so we need to
+            # catch SystemExit to prevent the entire shell from exiting (see #5689)
+            r = e.code if isinstance(e.code, int) else int(bool(e.code))
         except Exception:
-            xt.print_exception()
+            xt.print_exception(source_msg="Exception in " + get_proc_proxy_name(self))
             r = 1
         self.returncode = parse_proxy_return(r, stdout, stderr)
         safe_flush(stdout)
@@ -819,9 +812,7 @@ class ProcProxy:
             if handle < 3:
                 buf = sysbuf
             else:
-                buf = io.TextIOWrapper(
-                    io.open(handle, "wb", -1), encoding=enc, errors=err
-                )
+                buf = io.TextIOWrapper(open(handle, "wb", -1), encoding=enc, errors=err)
         elif hasattr(handle, "encoding"):
             # must be a text stream, no need to wrap.
             buf = handle

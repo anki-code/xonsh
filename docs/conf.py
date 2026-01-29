@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is execfile()d with the current directory set to its containing dir.
 #
@@ -13,37 +12,30 @@ from collections import OrderedDict
 from pathlib import Path
 
 # make current docs directory modules importable
+from sphinx.application import Sphinx
+
 sys.path.append(str(Path(__file__).parent.resolve()))
 
-import builtins
 import inspect
 import importlib
 import typing as tp
 
 os.environ["XONSH_DEBUG"] = "1"
+os.environ["XONSH_NO_AMALGAMATE"] = "1"
 
 from xonsh import __version__ as XONSH_VERSION
 from xonsh.environ import Env, Var, Xettings
 
 if tp.TYPE_CHECKING:
     from xonsh.environ import VarKeyType
-from xonsh.xontribs_meta import get_xontribs
-from xonsh.commands_cache import CommandsCache
+import xonsh.main as xmain
 
-import rst_helpers
-
-if not hasattr(builtins, "__xonsh__"):
-    from argparse import Namespace
-
-    builtins.__xonsh__ = Namespace()
-    builtins.__xonsh__.load = lambda *a, **kw: None
-    builtins.__xonsh__.link_builtins = lambda *a, **kw: None
+xmain.setup()
 
 spec = importlib.util.find_spec("prompt_toolkit")
 if spec is not None:
     # hacky runaround to import PTK-specific events
-    builtins.__xonsh__.env = Env()
-    from xonsh.ptk_shell.shell import events
+    from xonsh.shells.ptk_shell import events
 else:
     from xonsh.events import events
 
@@ -64,18 +56,24 @@ extensions = [
     "sphinx.ext.imgmath",
     "sphinx.ext.inheritance_diagram",
     "sphinx.ext.viewcode",
-    #'sphinx.ext.autosummary',
+    "sphinx.ext.duration",
+    "sphinx.ext.autosummary",
     "numpydoc",
-    "cmdhelp",
+    "extensions.cmdhelp",
     "runthis.sphinxext",
-    "jinja_rst_ext",
+    "extensions.jinja_rst_ext",
+    "myst_parser",  # *.md - https://myst-parser.readthedocs.io/
+    "sphinx_prompt",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
 
 # The suffix of source filenames.
-source_suffix = ".rst"
+source_suffix = {
+    ".rst": "restructuredtext",
+    ".rst.jinja2": "restructuredtext",
+}
 
 # The encoding of source files.
 # source_encoding = 'utf-8'
@@ -84,8 +82,8 @@ source_suffix = ".rst"
 master_doc = "contents"
 
 # General information about the project.
-project = u"xonsh"
-copyright = u"2015, Anthony Scopatz"
+project = "xonsh"
+copyright = "2015, Anthony Scopatz"
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -112,6 +110,7 @@ exclude_patterns = [
     "api/blank.rst",
     "_build",
     "_static",
+    "_templates",
 ]
 
 # List of directories, relative to source directory, that shouldn't be searched
@@ -158,30 +157,13 @@ modindex_common_prefix = ["xonsh."]
 # documentation.
 if not on_rtd:
 
-    import cloud_sptheme as csp
-
-    html_theme = "cloud"
+    html_theme = "furo"
 
     html_theme_options = {
-        "max_width": "1250px",
-        "minimal_width": "700px",
-        "relbarbgcolor": "#000000",
-        "footerbgcolor": "#FFFFE7",
-        "sidebarwidth": "322px",
-        "sidebarbgcolor": "#e7e7ff",
-        #'googleanalytics_id': 'UA-41934829-1',
-        "inline_admonitions": True,
-        "stickysidebar": False,
-        "highlighttoc": False,
-        "externalrefs": False,
-        "collapsiblesidebar": True,
-        "default_layout_text_size": "100%",  # prevents division by zero error
-        "fontcssurl": "https://fonts.googleapis.com/css?family=Noticia+Text|Open+Sans|Droid+Sans+Mono",
+        "source_repository": "https://github.com/xonsh/xonsh/",
+        "source_branch": "main",
+        "source_directory": "docs/",
     }
-
-    # Add any paths that contain custom themes here, relative to this directory.
-    html_theme_path = ["_theme", csp.get_theme_dir()]
-    templates_path = ["_templates_overwrite"]
 
 # The name for this set of Sphinx documents.  If None, it defaults to
 # "<project> v<release> documentation".
@@ -192,7 +174,7 @@ if not on_rtd:
 
 # The name of an image file (relative to this directory) to place at the top
 # of the sidebar.
-html_logo = "_static/ascii_conch_part_transparent_tight.png"
+html_logo = "_static/xonsh_terminal_icon_256.png"
 
 # The name of an image file (within the static path) to use as favicon of the
 # docs.  This file should be a Windows icon file (.ico) being 16x16 or 32x32
@@ -203,9 +185,8 @@ html_favicon = "_static/magic_conch.ico"
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
-html_style = "numpy_friendly.css"
 
-html_extra_path = ["_static/robots.txt"]
+html_extra_path = ["_static/robots.txt", "install"]
 
 # If not '', a 'Last updated on:' timestamp is inserted at every page bottom,
 # using the given strftime format.
@@ -257,7 +238,7 @@ htmlhelp_basename = "xonshdoc"
 # Grouping the document tree into LaTeX files. List of tuples
 # (source start file, target name, title, author, documentclass [howto/manual]).
 latex_documents = [
-    ("index", "xonsh.tex", u"xonsh documentation", u"Anthony Scopatz", "manual")
+    ("index", "xonsh.tex", "xonsh documentation", "Anthony Scopatz", "manual")
 ]
 
 # The name of an image file (relative to this directory) to place at the top of
@@ -280,7 +261,7 @@ latex_documents = [
 # Autodocumentation Flags
 autodoc_member_order = "groupwise"
 autoclass_content = "both"
-autosummary_generate = []
+autosummary_generate = True
 
 # Prevent numpy from making silly tables
 numpydoc_show_class_members = False
@@ -338,86 +319,9 @@ def make_envvars():
 jinja_contexts = {
     # file-name envvars.rst
     "envvars": {
-        "env_vars": make_envvars(),
-        "rst": rst_helpers,
+        "make_envvars": make_envvars,
     },
 }
-
-
-def make_xontribs():
-    xons = get_xontribs()
-    names = sorted(xons)
-    s = ".. list-table::\n" "    :header-rows: 0\n\n"
-    table = []
-    ncol = 5
-    row = "    {0} - :ref:`{1} <{2}>`"
-    for i, name in enumerate(names):
-        star = "*" if i % ncol == 0 else " "
-        table.append(row.format(star, name, name.lower()))
-    table.extend(["      -"] * ((ncol - len(names) % ncol) % ncol))
-    s += "\n".join(table) + "\n\n"
-    s += "Information\n" "-----------\n\n"
-    sec = (
-        ".. _{low}:\n\n"
-        "{title}\n"
-        "{under}\n"
-        ":Website: {url}\n"
-        ":Package: {pkg}\n\n"
-        "{desc}\n\n"
-        "{inst}\n\n"
-        "{usage}"
-        "-------\n\n"
-    )
-    for name in names:
-        d = xons[name]
-        title = name
-        under = "." * len(title)
-        desc = d.description
-        if not isinstance(desc, str):
-            desc = "".join(desc)
-        if d.package is None:
-            pkg = "unknown"
-            inst = ""
-            usage = ""
-        else:
-            pkg = d.package.name
-            if d.package.url:
-                pkg = "`{0} website <{1}>`_".format(pkg, d.package.url)
-            if d.package.license:
-                pkg = pkg + ", " + d.package.license
-            inst = ""
-            installd = d.package.install
-            if d.package.name == "xonsh":
-                inst = "This xontrib is preinstalled with xonsh.\n\n"
-            elif len(installd) > 0:
-                inst = "**Installation:**\n\n" ".. code-block:: xonsh\n\n"
-                for k, v in sorted(installd.items()):
-                    cmd = "\n    ".join(v.split("\n"))
-                    inst += ("    # install with {k}\n" "    {cmd}").format(
-                        k=k, cmd=cmd
-                    )
-            usage = (
-                "**Usage:**\n\n"
-                "Run the following command to enable (or add "
-                "it to your :doc:`.xonshrc </xonshrc>` file to enable "
-                "on startup.)\n\n"
-                ".. code-block:: xonsh\n\n"
-            )
-            usage += "    xontrib load {}\n\n".format(name)
-        s += sec.format(
-            low=name.lower(),
-            title=title,
-            under=under,
-            url=d.url or "unknown",
-            desc=desc,
-            pkg=pkg,
-            inst=inst,
-            usage=usage,
-        )
-    s = s[:-9]
-    fname = os.path.join(os.path.dirname(__file__), "xontribsbody")
-    with open(fname, "w") as f:
-        f.write(s)
 
 
 def make_events():
@@ -449,16 +353,18 @@ def make_events():
         f.write(s)
 
 
-make_xontribs()
 make_events()
 
-builtins.__xonsh__.history = None
-builtins.__xonsh__.env = {}
-builtins.__xonsh__.commands_cache = CommandsCache()
 
-
-def setup(app):
+def setup(app: Sphinx):
     from xonsh.pyghooks import XonshConsoleLexer
 
     app.add_lexer("xonshcon", XonshConsoleLexer)
     app.add_css_file("custom.css")
+
+
+if __name__ == "__main__":
+    # use this to debug the process from IDEs
+    from sphinx.cmd import build
+
+    build.main(["-b", "html", ".", "_build/html"])

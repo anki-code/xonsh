@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
 """Implements the xonsh parser for Python v3.8."""
-import xonsh.ast as ast
-from xonsh.parsers.v36 import Parser as ThreeSixParser
+
+import xonsh.parsers.ast as ast
 from xonsh.parsers.base import store_ctx
+from xonsh.parsers.v36 import Parser as ThreeSixParser
 
 
 class Parser(ThreeSixParser):
@@ -10,8 +10,6 @@ class Parser(ThreeSixParser):
 
     def __init__(
         self,
-        lexer_optimize=True,
-        lexer_table="xonsh.lexer_table",
         yacc_optimize=True,
         yacc_table="xonsh.parser_table",
         yacc_debug=False,
@@ -19,10 +17,6 @@ class Parser(ThreeSixParser):
     ):
         """Parameters
         ----------
-        lexer_optimize : bool, optional
-            Set to false when unstable and true when lexer is stable.
-        lexer_table : str, optional
-            Lexer module used when optimized.
         yacc_optimize : bool, optional
             Set to false when unstable and true when parser is stable.
         yacc_table : str, optional
@@ -43,8 +37,6 @@ class Parser(ThreeSixParser):
         for rule in tok_rules:
             self._tok_rule(rule)
         super().__init__(
-            lexer_optimize=lexer_optimize,
-            lexer_table=lexer_table,
             yacc_optimize=yacc_optimize,
             yacc_table=yacc_table,
             yacc_debug=yacc_debug,
@@ -374,7 +366,7 @@ class Parser(ThreeSixParser):
             kwarg=p[9],
             defaults=[],
         )
-        self._set_regular_args(p0, p[1], p[2], p[3], p[4])
+        self._set_regular_args(p0, *p[1:5])
         self._set_var_args(p0, p[6], None)
         p[0] = p0
 

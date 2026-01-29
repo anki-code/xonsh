@@ -1,34 +1,38 @@
-# -*- coding: utf-8 -*-
 """The main xonsh script."""
-import os
-import sys
-import enum
+
 import argparse
 import builtins
 import contextlib
+import enum
+import os
 import signal
+import sys
 import traceback
 
-from xonsh import __version__
-from xonsh.timings import setup_timings
-from xonsh.lazyasd import lazyobject
-from xonsh.shell import Shell
-from xonsh.pretty import pretty
-from xonsh.execer import Execer
-from xonsh.jobs import ignore_sigtstp
-from xonsh.tools import print_color, to_bool_or_int
-from xonsh.platform import HAS_PYGMENTS, ON_WINDOWS
-from xonsh.codecache import run_script_with_cache, run_code_with_cache
-from xonsh.xonfig import print_welcome_screen
-from xonsh.xontribs import xontribs_load
-from xonsh.lazyimps import pygments, pyghooks
-from xonsh.imphooks import install_import_hooks
-from xonsh.events import events
-from xonsh.environ import xonshrc_context, make_args_env
-from xonsh.built_ins import XonshSession, load_builtins
-
 import xonsh.procs.pipelines as xpp
-
+from xonsh import __version__
+from xonsh.built_ins import XSH
+from xonsh.codecache import run_code_with_cache, run_script_with_cache
+from xonsh.environ import get_home_xonshrc_path, make_args_env, xonshrc_context
+from xonsh.events import events
+from xonsh.execer import Execer
+from xonsh.imphooks import install_import_hooks
+from xonsh.lib.lazyasd import lazyobject
+from xonsh.lib.lazyimps import pyghooks, pygments
+from xonsh.lib.pretty import pretty
+from xonsh.platform import HAS_PYGMENTS, ON_WINDOWS
+from xonsh.procs.jobs import ignore_sigtstp
+from xonsh.shell import Shell
+from xonsh.timings import setup_timings
+from xonsh.tools import (
+    display_error_message,
+    print_color,
+    print_exception,
+    to_bool_or_int,
+    unquote,
+)
+from xonsh.xonfig import print_welcome_screen
+from xonsh.xontribs import auto_load_xontribs_from_entrypoints, xontribs_load
 
 events.transmogrify("on_post_init", "LoadEvent")
 events.doc(
@@ -46,7 +50,7 @@ events.transmogrify("on_exit", "LoadEvent")
 events.doc(
     "on_exit",
     """
-on_exit() -> None
+on_exit(exit_code : int) -> None
 
 Fired after all commands have been executed, before tear-down occurs.
 
@@ -74,6 +78,16 @@ on_post_cmdloop() -> None
 Fired just after the command loop finishes, if it is.
 
 NOTE: All the caveats of the ``atexit`` module also apply to this event.
+""",
+)
+
+events.transmogrify("on_xontribs_loaded", "LoadEvent")
+events.doc(
+    "on_xontribs_loaded",
+    """
+on_xontribs_loaded() -> None
+
+Fired after external xontribs with ``entrypoints defined`` are loaded.
 """,
 )
 
@@ -108,14 +122,14 @@ def get_setproctitle():
 
 
 def path_argument(s):
-    """Return a path only if the path is actually legal
+    """Return a path only if the path is actually legal (file or directory)
 
     This is very similar to argparse.FileType, except that it doesn't return
     an open file handle, but rather simply validates the path."""
 
     s = os.path.abspath(os.path.expanduser(s))
-    if not os.path.isfile(s):
-        msg = "{0!r} must be a valid path to a file".format(s)
+    if not os.path.exists(s):
+        msg = f"{s!r} must be a valid path to a file or directory"
         raise argparse.ArgumentTypeError(msg)
     return s
 
@@ -162,16 +176,9 @@ def parser():
         default=False,
     )
     p.add_argument(
-        "--config-path",
-        help=argparse.SUPPRESS,
-        dest="config_path",
-        default=None,
-        type=path_argument,
-    )
-    p.add_argument(
         "--rc",
         help="The xonshrc files to load, these may be either xonsh "
-        "files or JSON-based static configuration files.",
+        "files or directories containing xonsh files",
         dest="rc",
         nargs="+",
         type=path_argument,
@@ -179,10 +186,18 @@ def parser():
     )
     p.add_argument(
         "--no-rc",
-        help="Do not load the .xonshrc files.",
+        help="Do not load any xonsh RC files. Argument --rc will "
+        "be ignored if --no-rc is set.",
         dest="norc",
         action="store_true",
         default=False,
+    )
+    p.add_argument(
+        "--no-env",
+        help="Do not inherit parent environment variables.",
+        dest="inherit_env",
+        action="store_false",
+        default=True,
     )
     p.add_argument(
         "--no-script-cache",
@@ -208,6 +223,7 @@ def parser():
         default=None,
     )
     p.add_argument(
+        "-st",
         "--shell-type",
         help="What kind of shell should be used. "
         "Possible options: "
@@ -251,7 +267,7 @@ def _pprint_displayhook(value):
     if isinstance(value, xpp.HiddenCommandPipeline):
         builtins._ = value
         return
-    env = builtins.__xonsh__.env
+    env = XSH.env
     printed_val = None
     if env.get("PRETTY_PRINT_RESULTS"):
         printed_val = pretty(value)
@@ -274,41 +290,93 @@ class XonshMode(enum.Enum):
     interactive = 3
 
 
-def start_services(shell_kwargs, args, pre_env={}):
+def _get_rc_files(shell_kwargs: dict, args, env):
+    if shell_kwargs.get("norc"):
+        # if --no-rc was passed, then disable loading RC files and dirs
+        return (), ()
+
+    # determine which RC files to load, including whether any RC directories
+    # should be scanned for such files
+    rc_cli = shell_kwargs.get("rc")
+    if rc_cli:
+        # if an explicit --rc was passed, then we should load only that RC
+        # file, and nothing else (ignore both XONSHRC and XONSHRC_DIR)
+        rc = tuple(r for r in rc_cli if os.path.isfile(r))
+        rcd = tuple(r for r in rc_cli if os.path.isdir(r))
+        return rc, rcd
+
+    # otherwise, get the RC files from XONSHRC, and RC dirs from XONSHRC_DIR
+    rc = env.get("XONSHRC")
+    rcd = env.get("XONSHRC_DIR")
+
+    if not env.get("XONSH_INTERACTIVE", False):
+        """
+        Home based ``~/.xonshrc`` file has special meaning and history. The ecosystem around shells treats this kind of files
+        as the place where interactive tools can add configs. To avoid unintended and unexpected affection
+        of this file to non-interactive behavior we remove this file in non-interactive mode e.g. script with shebang.
+        """
+        home_xonshrc = get_home_xonshrc_path()
+        rc = tuple(c for c in rc if c != home_xonshrc)
+
+    return rc, rcd
+
+
+def _load_rc_files(shell_kwargs: dict, args, env, execer, ctx):
+    events.on_pre_rc.fire()
+    # load rc files
+    login = shell_kwargs.get("login", True)
+    rc, rcd = _get_rc_files(shell_kwargs, args, env)
+    XSH.rc_files = xonshrc_context(
+        rcfiles=rc, rcdirs=rcd, execer=execer, ctx=ctx, env=env, login=login
+    )
+    events.on_post_rc.fire()
+
+
+def _autoload_xontribs(env):
+    events.on_timingprobe.fire(name="pre_xontribs_autoload")
+    disabled = env.get("XONTRIBS_AUTOLOAD_DISABLED", False)
+    if disabled is True:
+        return
+    blocked_xontribs = disabled or ()
+    auto_load_xontribs_from_entrypoints(
+        blocked_xontribs, verbose=bool(env.get("XONSH_DEBUG", False))
+    )
+    events.on_xontribs_loaded.fire()
+    events.on_timingprobe.fire(name="post_xontribs_autoload")
+
+
+def start_services(shell_kwargs, args, pre_env=None):
     """Starts up the essential services in the proper order.
     This returns the environment instance as a convenience.
     """
-    install_import_hooks()
+    if pre_env is None:
+        pre_env = {}
     # create execer, which loads builtins
     ctx = shell_kwargs.get("ctx", {})
     debug = to_bool_or_int(os.getenv("XONSH_DEBUG", "0"))
     events.on_timingprobe.fire(name="pre_execer_init")
     execer = Execer(
-        xonsh_ctx=ctx,
+        filename="<stdin>",
         debug_level=debug,
         scriptcache=shell_kwargs.get("scriptcache", True),
         cacheall=shell_kwargs.get("cacheall", False),
     )
     events.on_timingprobe.fire(name="post_execer_init")
-    # load rc files
-    login = shell_kwargs.get("login", True)
-    env = builtins.__xonsh__.env
+    events.on_timingprobe.fire(name="pre_xonsh_session_load")
+    XSH.load(ctx=ctx, execer=execer, inherit_env=shell_kwargs.get("inherit_env", True))
+    events.on_timingprobe.fire(name="post_xonsh_session_load")
+
+    install_import_hooks(execer)
+
+    env = XSH.env
     for k, v in pre_env.items():
         env[k] = v
-    rc = shell_kwargs.get("rc", None)
-    rc = env.get("XONSHRC") if rc is None else rc
-    if (
-        args.mode != XonshMode.interactive
-        and not args.force_interactive
-        and not args.login
-    ):
-        #  Don't load xonshrc if not interactive shell
-        rc = None
-    events.on_pre_rc.fire()
-    xonshrc_context(rcfiles=rc, execer=execer, ctx=ctx, env=env, login=login)
-    events.on_post_rc.fire()
+
+    _load_rc_files(shell_kwargs, args, env, execer, ctx)
+    if not shell_kwargs.get("norc"):
+        _autoload_xontribs(env)
     # create shell
-    builtins.__xonsh__.shell = Shell(execer=execer, **shell_kwargs)
+    XSH.shell = Shell(execer=execer, **shell_kwargs)
     ctx["__name__"] = "__main__"
     return env
 
@@ -317,7 +385,6 @@ def premain(argv=None):
     """Setup for main xonsh entry point. Returns parsed arguments."""
     if argv is None:
         argv = sys.argv[1:]
-    builtins.__xonsh__ = XonshSession()
     setup_timings(argv)
     setproctitle = get_setproctitle()
     if setproctitle is not None:
@@ -332,38 +399,57 @@ def premain(argv=None):
         "login": False,
         "scriptcache": args.scriptcache,
         "cacheall": args.cacheall,
-        "ctx": builtins.__xonsh__.ctx,
+        "ctx": XSH.ctx,
     }
     if args.login or sys.argv[0].startswith("-"):
         args.login = True
         shell_kwargs["login"] = True
     if args.norc:
-        shell_kwargs["rc"] = ()
+        shell_kwargs["norc"] = True
     elif args.rc:
         shell_kwargs["rc"] = args.rc
-    setattr(sys, "displayhook", _pprint_displayhook)
+    shell_kwargs["inherit_env"] = args.inherit_env
+    sys.displayhook = _pprint_displayhook
     if args.command is not None:
         args.mode = XonshMode.single_command
         shell_kwargs["shell_type"] = "none"
+        xonsh_mode = "single_command"
     elif args.file is not None:
         args.mode = XonshMode.script_from_file
         shell_kwargs["shell_type"] = "none"
+        xonsh_mode = "script_from_file"
     elif not sys.stdin.isatty() and not args.force_interactive:
         args.mode = XonshMode.script_from_stdin
         shell_kwargs["shell_type"] = "none"
+        xonsh_mode = "script_from_stdin"
     else:
         args.mode = XonshMode.interactive
         shell_kwargs["completer"] = True
         shell_kwargs["login"] = True
+        xonsh_mode = "interactive"
 
     pre_env = {
         "XONSH_LOGIN": shell_kwargs["login"],
         "XONSH_INTERACTIVE": args.force_interactive
         or (args.mode == XonshMode.interactive),
+        "XONSH_MODE": xonsh_mode,
     }
-    env = start_services(shell_kwargs, args, pre_env=pre_env)
+    pre_env["COLOR_RESULTS"] = os.getenv("COLOR_RESULTS", pre_env["XONSH_INTERACTIVE"])
+
+    # Load -DVAR=VAL arguments.
     if args.defines is not None:
-        env.update([x.split("=", 1) for x in args.defines])
+        for x in args.defines:
+            try:
+                var, val = x.split("=", 1)
+                pre_env[var] = unquote(val)
+            except Exception:
+                print(
+                    f"Wrong format for -D{x} argument. Use -DVAR=VAL form.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+    start_services(shell_kwargs, args, pre_env=pre_env)
     return args
 
 
@@ -411,8 +497,9 @@ def _failback_to_other_shells(args, err):
 
     if foreign_shell:
         traceback.print_exc()
-        print("Xonsh encountered an issue during launch", file=sys.stderr)
-        print("Failback to {}".format(foreign_shell), file=sys.stderr)
+        print("Xonsh encountered an issue during launch.", file=sys.stderr)
+        print("Please report to https://github.com/xonsh/xonsh/issues", file=sys.stderr)
+        print(f"Failback to {foreign_shell}", file=sys.stderr)
         os.execlp(foreign_shell, foreign_shell)
     else:
         raise err
@@ -438,13 +525,18 @@ def main_xonsh(args):
         signal.signal(signal.SIGTTOU, func_sig_ttin_ttou)
 
     events.on_post_init.fire()
-    env = builtins.__xonsh__.env
-    shell = builtins.__xonsh__.shell
-    history = builtins.__xonsh__.history
+
+    env = XSH.env
+    shell = XSH.shell
+    history = XSH.history
     exit_code = 0
 
     if shell and not env["XONSH_INTERACTIVE"]:
         shell.ctx.update({"exit": sys.exit})
+
+    # store a sys.exc_info() tuple to record any exception that might occur in the user code that we are about to execute
+    # if this does not change, no exceptions were thrown. Otherwise, print a traceback that does not expose xonsh internals
+    exc_info = None, None, None
 
     try:
         if args.mode == XonshMode.interactive:
@@ -454,8 +546,12 @@ def main_xonsh(args):
             env["XONSH_INTERACTIVE"] = True
 
             ignore_sigtstp()
-            if env["XONSH_INTERACTIVE"] and not any(
-                os.path.isfile(i) for i in env["XONSHRC"]
+            if (
+                env["XONSH_INTERACTIVE"]
+                and not env["XONSH_SUPPRESS_WELCOME"]
+                and sys.stdin.isatty()  # In case the interactive mode is forced but no tty (input from pipe).
+                and not any(os.path.isfile(i) for i in env["XONSHRC"])
+                and not any(os.path.isdir(i) for i in env["XONSHRC_DIR"])
             ):
                 print_welcome_screen()
             events.on_pre_cmdloop.fire()
@@ -465,38 +561,78 @@ def main_xonsh(args):
                 events.on_post_cmdloop.fire()
         elif args.mode == XonshMode.single_command:
             # run a single command and exit
-            run_code_with_cache(args.command.lstrip(), shell.execer, mode="single")
+            exc_info = run_code_with_cache(
+                args.command.lstrip(),
+                "<string>",
+                shell.execer,
+                glb=shell.ctx,
+                mode="single",
+            )
             if history is not None and history.last_cmd_rtn is not None:
                 exit_code = history.last_cmd_rtn
         elif args.mode == XonshMode.script_from_file:
             # run a script contained in a file
             path = os.path.abspath(os.path.expanduser(args.file))
-            if os.path.isfile(path):
+            if os.path.isdir(path):
+                print(f"xonsh: {args.file}: Is a directory.")
+                exit_code = 1
+            elif os.path.exists(path):
                 sys.argv = [args.file] + args.args
                 env.update(make_args_env())  # $ARGS is not sys.argv
                 env["XONSH_SOURCE"] = path
                 shell.ctx.update({"__file__": args.file, "__name__": "__main__"})
-                run_script_with_cache(
+                exc_info = run_script_with_cache(
                     args.file, shell.execer, glb=shell.ctx, loc=None, mode="exec"
                 )
             else:
-                print("xonsh: {0}: No such file or directory.".format(args.file))
+                print(f"xonsh: {args.file}: No such file.")
                 exit_code = 1
         elif args.mode == XonshMode.script_from_stdin:
             # run a script given on stdin
             code = sys.stdin.read()
-            run_code_with_cache(
-                code, shell.execer, glb=shell.ctx, loc=None, mode="exec"
+            exc_info = run_code_with_cache(
+                code, "<stdin>", shell.execer, glb=shell.ctx, loc=None, mode="exec"
             )
+    except SyntaxError:
+        exit_code = 1
+        debug_level = env.get("XONSH_DEBUG", 0)
+        if debug_level == 0:
+            # print error without tracktrace
+            display_error_message(sys.exc_info())
+        else:
+            # pass error to finally clause
+            exc_info = sys.exc_info()
+    except SystemExit:
+        exc_info = sys.exc_info()
     finally:
-        events.on_exit.fire()
-    postmain(args)
+        if exc_info != (None, None, None):
+            err_type, err, _ = exc_info
+            if err_type is SystemExit:
+                code = getattr(exc_info[1], "code", 0)
+                if code is None:
+                    exit_code = 0
+                else:
+                    exit_code = code
+                    try:
+                        exit_code = int(code)
+                    except ValueError:
+                        pass
+                XSH.exit = exit_code
+            else:
+                exit_code = 1
+                print_exception(None, exc_info)
+
+        if isinstance(XSH.exit, int):
+            exit_code = XSH.exit
+        events.on_exit.fire(exit_code=exit_code)
+        postmain(args)
     return exit_code
 
 
 def postmain(args=None):
     """Teardown for main xonsh entry point, accepts parsed arguments."""
-    builtins.__xonsh__.shell = None
+    XSH.unload()
+    XSH.shell = None
 
 
 @contextlib.contextmanager
@@ -506,7 +642,7 @@ def main_context(argv=None):
     up the shell.
     """
     args = premain(argv)
-    yield builtins.__xonsh__.shell
+    yield XSH.shell
     postmain(args)
 
 
@@ -550,14 +686,14 @@ def setup(
     ctx = {} if ctx is None else ctx
     # setup xonsh ctx and execer
     if not hasattr(builtins, "__xonsh__"):
-        execer = Execer(xonsh_ctx=ctx)
-        builtins.__xonsh__ = XonshSession(ctx=ctx, execer=execer)
-        load_builtins(ctx=ctx, execer=execer)
-        builtins.__xonsh__.shell = Shell(execer, ctx=ctx, shell_type=shell_type)
-    builtins.__xonsh__.env.update(env)
-    install_import_hooks()
-    builtins.aliases.update(aliases)
+        execer = Execer(filename="<stdin>")
+        XSH.load(ctx=ctx, execer=execer)
+        XSH.shell = Shell(execer, ctx=ctx, shell_type=shell_type)
+    XSH.env.update(env)
+    install_import_hooks(XSH.execer)
+    XSH.aliases.update(aliases)
     if xontribs:
         xontribs_load(xontribs)
-    tp = builtins.__xonsh__.commands_cache.threadable_predictors
-    tp.update(threadable_predictors)
+
+    if threadable_predictors:
+        XSH.commands_cache.threadable_predictors.update(threadable_predictors)

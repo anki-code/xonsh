@@ -1,7 +1,10 @@
 """Event tests"""
+
 import inspect
+
 import pytest
-from xonsh.events import EventManager, Event, LoadEvent
+
+from xonsh.events import Event, EventManager, LoadEvent
 
 
 @pytest.fixture
@@ -156,8 +159,8 @@ def test_load_2nd_call(events):
     assert called == 1
 
 
-def test_typos(xonsh_builtins):
-    for name, ev in vars(xonsh_builtins.events).items():
+def test_typos(xession):
+    for name, ev in vars(xession.builtins.events).items():
         if "pytest" in name:
             continue
         assert inspect.getdoc(ev)

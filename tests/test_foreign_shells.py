@@ -1,25 +1,17 @@
-# -*- coding: utf-8 -*-
 """Tests foreign shells."""
-from __future__ import unicode_literals, print_function
+
 import os
 import subprocess
 
 import pytest  # noqa F401
-from tools import skip_if_on_windows, skip_if_on_unix
 
-from xonsh.foreign_shells import foreign_shell_data, parse_env, parse_aliases
+from xonsh.foreign_shells import foreign_shell_data, parse_aliases, parse_env
+from xonsh.pytest.tools import skip_if_on_unix, skip_if_on_windows
 
 
 def test_parse_env():
     exp = {"X": "YES", "Y": "NO"}
-    s = (
-        "some garbage\n"
-        "__XONSH_ENV_BEG__\n"
-        "Y=NO\n"
-        "X=YES\n"
-        "__XONSH_ENV_END__\n"
-        "more filth"
-    )
+    s = "some garbage\n__XONSH_ENV_BEG__\nY=NO\nX=YES\n__XONSH_ENV_END__\nmore filth"
     obs = parse_env(s)
     assert exp == obs
 
@@ -55,12 +47,17 @@ def test_parse_env_equals():
 
 
 def test_parse_aliases():
-    exp = {"x": ["yes", "-1"], "y": ["echo", "no"]}
+    exp = {
+        "x": ["yes", "-1"],
+        "y": ["echo", "no"],
+        "z": ["echo", "True", "&&", "echo", "Next", "||", "echo", "False"],
+    }
     s = (
         "some garbage\n"
         "__XONSH_ALIAS_BEG__\n"
         "alias x='yes -1'\n"
         "alias y='echo    no'\n"
+        "alias z='echo True && \\\n echo Next || \\\n echo False'\n"  # noqa: E261,W605
         "__XONSH_ALIAS_END__\n"
         "more filth"
     )
@@ -89,7 +86,7 @@ def test_foreign_bash_data():
 def test_foreign_cmd_data():
     env = (("ENV_TO_BE_REMOVED", "test"),)
     batchfile = os.path.join(os.path.dirname(__file__), "batch.bat")
-    source_cmd = 'call "{}"\necho off'.format(batchfile)
+    source_cmd = f'call "{batchfile}"\necho off'
     try:
         obsenv, _ = foreign_shell_data(
             "cmd",

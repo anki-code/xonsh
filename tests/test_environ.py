@@ -1,28 +1,34 @@
-# -*- coding: utf-8 -*-
 """Tests the xonsh environment."""
-from __future__ import unicode_literals, print_function
-import os
-import re
-import pathlib
+
 import datetime
-import itertools
+import os
+import pathlib
+import re
+import warnings
+from random import shuffle
 from tempfile import TemporaryDirectory
+from threading import Thread
+from time import sleep
 
 import pytest
 
-from xonsh.tools import always_true, DefaultNotGiven
-from xonsh.commands_cache import CommandsCache
 from xonsh.environ import (
+    DeprecatedSetting,
     Env,
-    locate_binary,
-    default_env,
-    make_args_env,
+    InternalEnvironDict,
     LsColors,
-    default_value,
+    PTKSetting,
     Var,
+    default_env,
+    default_value,
+    locate_binary,
+    make_args_env,
+    xonsh_cache_dir,
+    xonsh_config_dir,
+    xonsh_data_dir,
 )
-
-from tools import skip_if_on_unix
+from xonsh.pytest.tools import skip_if_on_unix
+from xonsh.tools import DefaultNotGiven, always_true
 
 
 def test_env_normal():
@@ -73,6 +79,15 @@ def test_env_detype_no_dict():
     env.register("YO", validate=always_true, convert=None, detype=None)
     det = env.detype()
     assert "YO" not in det
+
+
+def test_env_detype_all():
+    env = Env()
+    env._vars["DEFAULT"] = Var.with_default(1)
+    env._detyped, det = None, env.detype()
+    env._detyped, det_all = None, env.detype_all()
+    assert "DEFAULT" not in det
+    assert "DEFAULT" in det_all
 
 
 def test_histcontrol_none():
@@ -150,8 +165,47 @@ def test_swap_exception_replacement():
     assert env["VAR"] == "original value"
 
 
+def test_thread_local_swap():
+    env = Env(a="orig")
+    iter_count = 10
+    num_threads = 4
+    success_variables = [False] * (num_threads + 1)
+
+    def loop(index, swapped_values=None):
+        if swapped_values:
+            if env["a"] != "orig":
+                success_variables[index] = False
+                return
+            env.set_swapped_values(swapped_values)
+        for _ in range(iter_count):
+            if env["a"] != "swapped":
+                success_variables[index] = False
+                break
+            with env.swap(a=index):
+                sleep(0.01)
+                if env["a"] == index:
+                    success_variables[index] = True
+                else:
+                    success_variables[index] = False
+                    break
+            sleep(0.01)
+
+    with env.swap(a="swapped"):
+        threads = [
+            Thread(target=loop, args=(i, env.get_swapped_values()))
+            for i in range(1, num_threads + 1)
+        ]
+        for t in threads:
+            t.start()
+        loop(0)
+    for t in threads:
+        t.join()
+
+    assert all(success_variables)
+
+
 @skip_if_on_unix
-def test_locate_binary_on_windows(xonsh_builtins):
+def test_locate_binary_on_windows(xession):
     files = ("file1.exe", "FILE2.BAT", "file3.txt")
     with TemporaryDirectory() as tmpdir:
         tmpdir = os.path.realpath(tmpdir)
@@ -159,10 +213,7 @@ def test_locate_binary_on_windows(xonsh_builtins):
             fpath = os.path.join(tmpdir, fname)
             with open(fpath, "w") as f:
                 f.write(fpath)
-        xonsh_builtins.__xonsh__.env.update(
-            {"PATH": [tmpdir], "PATHEXT": [".COM", ".EXE", ".BAT"]}
-        )
-        xonsh_builtins.__xonsh__.commands_cache = CommandsCache()
+        xession.env.update({"PATH": [tmpdir], "PATHEXT": [".COM", ".EXE", ".BAT"]})
         assert locate_binary("file1") == os.path.join(tmpdir, "file1.exe")
         assert locate_binary("file1.exe") == os.path.join(tmpdir, "file1.exe")
         assert locate_binary("file2") == os.path.join(tmpdir, "FILE2.BAT")
@@ -170,13 +221,12 @@ def test_locate_binary_on_windows(xonsh_builtins):
         assert locate_binary("file3") is None
 
 
-def test_event_on_envvar_change(xonsh_builtins):
-    env = Env(TEST=0)
-    xonsh_builtins.__xonsh__.env = env
+def test_event_on_envvar_change(xession, env):
+    env["TEST"] = 0
     share = []
     # register
 
-    @xonsh_builtins.events.on_envvar_change
+    @xession.builtins.events.on_envvar_change
     def handler(name, oldvalue, newvalue, **kwargs):
         share.extend((name, oldvalue, newvalue))
 
@@ -186,13 +236,11 @@ def test_event_on_envvar_change(xonsh_builtins):
     assert share == ["TEST", 0, 1]
 
 
-def test_event_on_envvar_new(xonsh_builtins):
-    env = Env()
-    xonsh_builtins.__xonsh__.env = env
+def test_event_on_envvar_new(xession, env):
     share = []
     # register
 
-    @xonsh_builtins.events.on_envvar_new
+    @xession.builtins.events.on_envvar_new
     def handler(name, value, **kwargs):
         share.extend((name, value))
 
@@ -202,13 +250,12 @@ def test_event_on_envvar_new(xonsh_builtins):
     assert share == ["TEST", 1]
 
 
-def test_event_on_envvar_change_from_none_value(xonsh_builtins):
-    env = Env(TEST=None)
-    xonsh_builtins.__xonsh__.env = env
+def test_event_on_envvar_change_from_none_value(xession, env):
+    env["TEST"] = None
     share = []
     # register
 
-    @xonsh_builtins.events.on_envvar_change
+    @xession.builtins.events.on_envvar_change
     def handler(name, oldvalue, newvalue, **kwargs):
         share.extend((name, oldvalue, newvalue))
 
@@ -219,13 +266,12 @@ def test_event_on_envvar_change_from_none_value(xonsh_builtins):
 
 
 @pytest.mark.parametrize("val", [1, None, True, "ok"])
-def test_event_on_envvar_change_no_fire_when_value_is_same(val, xonsh_builtins):
-    env = Env(TEST=val)
-    xonsh_builtins.__xonsh__.env = env
+def test_event_on_envvar_change_no_fire_when_value_is_same(val, xession, env):
+    env["TEST"] = val
     share = []
     # register
 
-    @xonsh_builtins.events.on_envvar_change
+    @xession.builtins.events.on_envvar_change
     def handler(name, oldvalue, newvalue, **kwargs):
         share.extend((name, oldvalue, newvalue))
 
@@ -235,17 +281,15 @@ def test_event_on_envvar_change_no_fire_when_value_is_same(val, xonsh_builtins):
     assert share == []
 
 
-def test_events_on_envvar_called_in_right_order(xonsh_builtins):
-    env = Env()
-    xonsh_builtins.__xonsh__.env = env
+def test_events_on_envvar_called_in_right_order(xession, env):
     share = []
     # register
 
-    @xonsh_builtins.events.on_envvar_new
+    @xession.builtins.events.on_envvar_new
     def handler(name, value, **kwargs):
         share[:] = ["new"]
 
-    @xonsh_builtins.events.on_envvar_change
+    @xession.builtins.events.on_envvar_change
     def handler1(name, oldvalue, newvalue, **kwargs):
         share[:] = ["change"]
 
@@ -288,7 +332,7 @@ def test_delitem():
     env = Env(VAR="a value")
     assert env["VAR"] == "a value"
     del env["VAR"]
-    with pytest.raises(Exception):
+    with pytest.raises(KeyError):
         env["VAR"]
 
 
@@ -303,7 +347,7 @@ def test_delitem_default():
     assert env[a_key] == a_value
 
 
-def test_lscolors_target(xonsh_builtins):
+def test_lscolors_target(xession):
     lsc = LsColors.fromstring("ln=target")
     assert lsc["ln"] == ("RESET",)
     assert lsc.is_target("ln")
@@ -320,21 +364,21 @@ def test_lscolors_target(xonsh_builtins):
         ("pi", ("BACKGROUND_BLACK", "YELLOW"), None, "delete existing key"),
     ],
 )
-def test_lscolors_events(key_in, old_in, new_in, test, xonsh_builtins):
+def test_lscolors_events(key_in, old_in, new_in, test, xession):
     lsc = LsColors.fromstring("fi=0:di=01;34:pi=40;33")
     # corresponding colors: [('RESET',), ('BOLD_CYAN',), ('BOLD_CYAN',), ('BACKGROUND_BLACK', 'YELLOW')]
 
     event_fired = False
 
-    @xonsh_builtins.events.on_lscolors_change
+    @xession.builtins.events.on_lscolors_change
     def handler(key, oldvalue, newvalue, **kwargs):
         nonlocal old_in, new_in, key_in, event_fired
-        assert (
-            key == key_in and oldvalue == old_in and newvalue == new_in
-        ), "Old and new event values match"
+        assert key == key_in and oldvalue == old_in and newvalue == new_in, (
+            "Old and new event values match"
+        )
         event_fired = True
 
-    xonsh_builtins.__xonsh__.env["LS_COLORS"] = lsc
+    xession.env["LS_COLORS"] = lsc
 
     if new_in is None:
         lsc.pop(key_in, "argle")
@@ -414,7 +458,7 @@ def test_register_custom_var_bool(val, converted):
         (32, "32"),
         (0, "0"),
         (27.0, "27.0"),
-        (None, "None"),
+        (None, ""),
         ("lol", "lol"),
         ("false", "false"),
         ("no", "no"),
@@ -439,7 +483,7 @@ def test_register_var_path():
     # Empty string is None to avoid uncontrolled converting empty string to Path('.')
     path = ""
     env["MY_PATH_VAR"] = path
-    assert env["MY_PATH_VAR"] == None
+    assert env["MY_PATH_VAR"] is None
 
     with pytest.raises(TypeError):
         env["MY_PATH_VAR"] = 42
@@ -538,6 +582,21 @@ def test_env_get_defaults():
     assert "TEST_REG_DNG" not in env
 
 
+def test_env_class_repr():
+    """Class with repr return string if env var."""
+
+    class Cls:
+        def __init__(self, var):
+            self.var = var
+
+        def __repr__(self):
+            return self.var
+
+    env = Env(CLS=Cls("hello"))
+    assert str(env.get("CLS")) == "hello"
+    assert str(env.__getitem__("CLS")) == "hello"
+
+
 @pytest.mark.parametrize(
     "val,validator",
     [
@@ -549,3 +608,122 @@ def test_env_get_defaults():
 def test_var_with_default_initer(val, validator):
     var = Var.with_default(val)
     assert var.validate.__name__ == validator
+
+
+def test_thread_local_dict():
+    d = InternalEnvironDict()
+    d["a"] = 1
+    assert d["a"] == 1
+    d.set_locally("a", 2)
+    assert d["a"] == 2
+    d.set_locally("a", 3)
+    assert d["a"] == 3
+    d["a"] = 4
+    assert d["a"] == 4
+    d.del_locally("a")
+    assert d["a"] == 1
+    d.set_locally("a", 5)
+    assert d.pop("a") == 5
+    assert d["a"] == 1
+    d.set_locally("a", 6)
+    assert d.popitem() == ("a", 6)
+    assert d["a"] == 1
+    assert d.pop("a", "nope") == 1
+    assert d.pop("a", "nope") == "nope"
+    assert "a" not in d
+
+
+def test_thread_local_dict_multiple():
+    d = InternalEnvironDict()
+    num_threads = 5
+    thread_values = [None] * num_threads
+
+    def thread(i):
+        d.set_locally("a", i**2)
+        sleep(0.1)
+        thread_values[i] = d["a"]
+        sleep(0.1)
+        d.del_locally("a")
+        sleep(0.1)
+
+    threads = [Thread(target=thread, args=(i,)) for i in range(num_threads)]
+    shuffle(threads)
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert thread_values == [i**2 for i in range(num_threads)]
+
+
+def test_xonsh_dir_vars():
+    env = Env(
+        XONSH_CONFIG_DIR="/config", XONSH_CACHE_DIR="/cache", XONSH_DATA_DIR="/data"
+    )
+    assert xonsh_config_dir(env), "/config"
+    assert xonsh_cache_dir(env), "/cache"
+    assert xonsh_data_dir(env), "/data"
+
+
+def test_numerical_envvar_defined():
+    """Test that numerical environment variables can be set and retrieved."""
+    env = Env()
+    env["123"] = "test_value"
+    assert env["123"] == "test_value"
+
+
+def test_numerical_envvar_mixed_alphanumeric():
+    """Test that mixed alphanumeric environment variables work."""
+    env = Env()
+    env["abc123"] = "value1"
+    env["123abc"] = "value2"
+    env["a1b2c3"] = "value3"
+
+    assert env["abc123"] == "value1"
+    assert env["123abc"] == "value2"
+    assert env["a1b2c3"] == "value3"
+
+
+def test_numerical_envvar_with_underscores():
+    """Test that numerical environment variables with underscores work."""
+    env = Env()
+    env["1_2_3"] = "underscore_value"
+    env["_123"] = "leading_underscore"
+    env["123_"] = "trailing_underscore"
+
+    assert env["1_2_3"] == "underscore_value"
+    assert env["_123"] == "leading_underscore"
+    assert env["123_"] == "trailing_underscore"
+
+
+def test_envpath_in_env_object():
+    """Ensure PATH is stored as an EnvPath inside Env."""
+    env = Env(PATH=["/usr/bin", "/bin"])
+    # PATH should exist in env
+    assert "PATH" in env
+    # PATH should behave like EnvPath (has .paths attribute)
+    assert hasattr(env["PATH"], "paths")
+    assert "/usr/bin" in env["PATH"].paths
+    assert "/bin" in env["PATH"].paths
+
+
+def test_env_deprecated():
+    env = Env()
+    env._vars["XONSH_PROMPT_AUTO_SUGGEST"] = PTKSetting.XONSH_PROMPT_AUTO_SUGGEST
+    env._vars["AUTO_SUGGEST"] = DeprecatedSetting.AUTO_SUGGEST
+    assert env["AUTO_SUGGEST"] is True
+    assert env["AUTO_SUGGEST"] == env["XONSH_PROMPT_AUTO_SUGGEST"]
+    env["AUTO_SUGGEST"] = False
+    assert env["AUTO_SUGGEST"] == env["XONSH_PROMPT_AUTO_SUGGEST"]
+    env["XONSH_PROMPT_AUTO_SUGGEST"] = True
+    assert env["AUTO_SUGGEST"] == env["XONSH_PROMPT_AUTO_SUGGEST"]
+    with pytest.warns(DeprecationWarning):
+        env["AUTO_SUGGEST"] = True
+    with pytest.warns(DeprecationWarning):
+        env["AUTO_SUGGEST"] = False
+    with warnings.catch_warnings(record=True) as wrngs:
+        env["XONSH_PROMPT_AUTO_SUGGEST"] = True
+    assert len(wrngs) == 0
+    with warnings.catch_warnings(record=True) as wrngs:
+        env["XONSH_PROMPT_AUTO_SUGGEST"] = False
+    assert len(wrngs) == 0

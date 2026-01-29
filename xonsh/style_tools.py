@@ -1,10 +1,10 @@
 """Xonsh color styling tools that simulate pygments, when it is unavailable."""
-import builtins
+
 from collections import defaultdict
 
-from xonsh.platform import HAS_PYGMENTS
-from xonsh.lazyasd import LazyObject
 from xonsh.color_tools import RE_BACKGROUND, iscolor, warn_deprecated_no_color
+from xonsh.lib.lazyasd import LazyObject
+from xonsh.platform import HAS_PYGMENTS
 from xonsh.tools import FORMATTER
 
 
@@ -16,7 +16,7 @@ class _TokenType(tuple):
     See https://bitbucket.org/birkenfeld/pygments-main/raw/05818a4ef9891d9ac22c851f7b3ea4b4fce460ab/AUTHORS
     """
 
-    parent = None
+    parent: "_TokenType|None" = None
 
     def split(self):
         buf = []
@@ -64,9 +64,11 @@ def partial_color_tokenize(template):
     of tuples mapping the token to the string which has that color.
     These sub-strings maybe templates themselves.
     """
-    if HAS_PYGMENTS and builtins.__xonsh__.shell is not None:
-        styles = __xonsh__.shell.shell.styler.styles
-    elif builtins.__xonsh__.shell is not None:
+    from xonsh.built_ins import XSH
+
+    if HAS_PYGMENTS and XSH.shell is not None:
+        styles = XSH.shell.shell.styler.styles
+    elif XSH.shell is not None:
         styles = DEFAULT_STYLE_DICT
     else:
         styles = None

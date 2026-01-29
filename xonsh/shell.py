@@ -1,22 +1,21 @@
-# -*- coding: utf-8 -*-
 """The xonsh shell"""
+
+import difflib
 import sys
 import time
-import difflib
-import builtins
 import warnings
 
-from xonsh.platform import (
-    best_shell_type,
-    ptk_above_min_supported,
-    has_prompt_toolkit,
-    minimum_required_ptk_version,
-)
-from xonsh.tools import XonshError, print_exception, simple_random_choice
+import xonsh.history.main as xhm
+from xonsh.built_ins import XSH
 from xonsh.events import events
 from xonsh.history.dummy import DummyHistory
-import xonsh.history.main as xhm
-
+from xonsh.platform import (
+    best_shell_type,
+    has_prompt_toolkit,
+    minimum_required_ptk_version,
+    ptk_above_min_supported,
+)
+from xonsh.tools import XonshError, is_class, print_exception, simple_random_choice
 
 events.doc(
     "on_transform_command",
@@ -29,6 +28,16 @@ interactive sessions.
 
 This may be fired multiple times per command, with other transformers input or
 output, so design any handlers for this carefully.
+
+.. code-block:: python
+
+    @events.on_transform_command
+    def _pipe_prev_command(cmd, **kw):
+        '''Pipe prev command e.g. `| grep 1` will be `<prev cmd> | grep 1`.'''
+        if cmd and cmd.startswith('| ') and __xonsh__.history:
+            return __xonsh__.history[-1].cmd.rstrip() + cmd.rstrip()
+        return cmd
+        
 """,
 )
 
@@ -47,6 +56,7 @@ events.doc(
 on_postcommand(cmd: str, rtn: int, out: str or None, ts: list) -> None
 
 Fires just after a command is executed. The arguments are the same as history.
+This event only fires in interactive mode.
 
 Parameters:
 
@@ -54,6 +64,48 @@ Parameters:
 * ``rtn``: The result of the command executed (``0`` for success)
 * ``out``: If xonsh stores command output, this is the output
 * ``ts``: Timestamps, in the order of ``[starting, ending]``
+
+Example:
+
+.. code-block:: python
+
+    @events.on_postcommand
+    def _prompt_err_command_again(cmd, rtn, out, ts):
+        '''If the result of executing the command is not zero, repeat the command on the next command prompt.'''
+        if rtn != 0:
+            $XONSH_PROMPT_NEXT_CMD = cmd.rstrip()
+""",
+)
+
+events.doc(
+    "on_command_not_found",
+    """
+on_command_not_found(cmd: list[str]) -> list[str] | tuple[str, ...] | None
+
+Fires if a command is not found (only in interactive sessions).
+
+Parameters:
+
+* ``cmd``: The command that was attempted
+
+Returns:
+
+* ``list[str]`` or ``tuple[str, ...]``: A replacement command to execute instead.
+  The first valid replacement from any handler will be used.
+* ``None``: To let the error be raised normally
+
+Note: If the replacement command also fails, the original error is shown.
+
+Example:
+
+.. code-block:: python
+
+    @events.on_command_not_found
+    def _vim_to_vi(cmd, **kwargs):
+        '''If vim not found let's try to use vi.'''
+        if cmd[0] == 'vim':
+            return ['vi'] + cmd[1:]
+
 """,
 )
 
@@ -106,8 +158,8 @@ def transform_command(src, show_diff=True):
                 "the recursion limit number of iterations to "
                 "converge."
             )
-    debug_level = builtins.__xonsh__.env.get("XONSH_DEBUG")
-    if show_diff and debug_level > 1 and src != raw:
+    debug_level = XSH.env.get("XONSH_DEBUG")
+    if show_diff and debug_level >= 1 and src != raw:
         sys.stderr.writelines(
             difflib.unified_diff(
                 raw.splitlines(keepends=True),
@@ -119,7 +171,7 @@ def transform_command(src, show_diff=True):
     return src
 
 
-class Shell(object):
+class Shell:
     """Main xonsh shell.
 
     Initializes execution environment and decides if prompt_toolkit or
@@ -164,7 +216,8 @@ class Shell(object):
         if shell_type == "prompt_toolkit":
             if not has_prompt_toolkit():
                 warnings.warn(
-                    "'prompt-toolkit' python package is not installed. Falling back to readline."
+                    "'prompt-toolkit' python package is not installed. Falling back to readline.",
+                    stacklevel=2,
                 )
                 shell_type = "readline"
             elif not ptk_above_min_supported():
@@ -172,16 +225,44 @@ class Shell(object):
                     "Installed prompt-toolkit version < v{}.{}.{} is not ".format(
                         *minimum_required_ptk_version
                     )
-                    + "supported. Falling back to readline."
+                    + "supported. Falling back to readline.",
+                    stacklevel=2,
                 )
                 shell_type = "readline"
             if init_shell_type in ("ptk1", "prompt_toolkit1"):
                 warnings.warn(
-                    "$SHELL_TYPE='{}' now deprecated, please update your run control file'".format(
-                        init_shell_type
-                    )
+                    f"$SHELL_TYPE='{init_shell_type}' now deprecated, please update your run control file'",
+                    stacklevel=2,
                 )
         return shell_type
+
+    @staticmethod
+    def construct_shell_cls(backend, **kwargs):
+        """Construct the history backend object."""
+        if is_class(backend):
+            cls = backend
+        else:
+            """
+            There is an edge case that we're using mostly in integration tests:
+            `echo 'echo 1' | xonsh -i` and it's not working with `TERM=dumb` (#5462 #5517)
+            because `dumb` is readline where stdin is not supported yet. PR is very welcome!
+            So in this case we need to force using prompt_toolkit.
+            """
+            is_stdin_to_interactive = (
+                XSH.env.get("XONSH_INTERACTIVE", False) and not sys.stdin.isatty()
+            )
+
+            if backend == "none":
+                from xonsh.shells.base_shell import BaseShell as cls
+            elif backend == "prompt_toolkit" or is_stdin_to_interactive:
+                from xonsh.shells.ptk_shell import PromptToolkitShell as cls
+            elif backend == "readline":
+                from xonsh.shells.readline_shell import ReadlineShell as cls
+            elif backend == "dumb":
+                from xonsh.shells.dumb_shell import DumbShell as cls
+            else:
+                raise XonshError(f"{backend} is not recognized as a shell type")
+        return cls(**kwargs)
 
     def __init__(self, execer, ctx=None, shell_type=None, **kwargs):
         """
@@ -200,11 +281,11 @@ class Shell(object):
         """
         self.execer = execer
         self.ctx = {} if ctx is None else ctx
-        env = builtins.__xonsh__.env
+        env = XSH.env
 
         # build history backend before creating shell
         if env.get("XONSH_INTERACTIVE"):
-            builtins.__xonsh__.history = hist = xhm.construct_history(
+            XSH.history = hist = xhm.construct_history(
                 env=env.detype(),
                 ts=[time.time(), None],
                 locked=True,
@@ -212,27 +293,16 @@ class Shell(object):
             )
             env["XONSH_HISTORY_FILE"] = hist.filename
         else:
-            builtins.__xonsh__.history = hist = DummyHistory()
+            XSH.history = hist = DummyHistory()
             env["XONSH_HISTORY_FILE"] = None
 
         shell_type = self.choose_shell_type(shell_type, env)
 
         self.shell_type = env["SHELL_TYPE"] = shell_type
 
-        # actually make the shell
-        if shell_type == "none":
-            from xonsh.base_shell import BaseShell as shell_class
-        elif shell_type == "prompt_toolkit":
-            from xonsh.ptk_shell.shell import PromptToolkitShell as shell_class
-        elif shell_type == "readline":
-            from xonsh.readline_shell import ReadlineShell as shell_class
-        elif shell_type == "jupyter":
-            from xonsh.jupyter_shell import JupyterShell as shell_class
-        elif shell_type == "dumb":
-            from xonsh.dumb_shell import DumbShell as shell_class
-        else:
-            raise XonshError("{} is not recognized as a shell type".format(shell_type))
-        self.shell = shell_class(execer=self.execer, ctx=self.ctx, **kwargs)
+        self.shell = self.construct_shell_cls(
+            shell_type, execer=self.execer, ctx=self.ctx, **kwargs
+        )
         # allows history garbage collector to start running
         if hist.gc is not None:
             hist.gc.wait_for_shell = False

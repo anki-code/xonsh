@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Timing related functionality for the xonsh shell.
 
 The following time_it alias and Timer was forked from the IPython project:
@@ -7,18 +6,18 @@ The following time_it alias and Timer was forked from the IPython project:
 * Copyright (c) 2001, Janko Hauser <jhauser@zscout.de>
 * Copyright (c) 2001, Nathaniel Gray <n8gray@caltech.edu>
 """
-import os
+
 import gc
-import sys
+import itertools
 import math
+import os
+import sys
 import time
 import timeit
-import builtins
-import itertools
 
-from xonsh.lazyasd import lazyobject, lazybool
+from xonsh.built_ins import XSH
 from xonsh.events import events
-from xonsh.platform import ON_WINDOWS
+from xonsh.lib.lazyasd import lazybool, lazyobject
 
 
 @lazybool
@@ -117,7 +116,7 @@ def format_time(timespan, precision=3):
             value = int(leftover / length)
             if value > 0:
                 leftover = leftover % length
-                time.append("{0}{1}".format(str(value), suffix))
+                time.append(f"{str(value)}{suffix}")
             if leftover < 1:
                 break
         return " ".join(time)
@@ -182,13 +181,16 @@ def inner(_it, _timer):
 
 def timeit_alias(args, stdin=None):
     """Runs timing study on arguments."""
+    if not args:
+        print("Usage: timeit! <expression>")
+        return -1
     # some real args
     number = 0
     quiet = False
     repeat = 3
     precision = 3
     # setup
-    ctx = builtins.__xonsh__.ctx
+    ctx = XSH.ctx
     timer = Timer(timer=clock)
     stmt = " ".join(args)
     innerstr = INNER_TEMPLATE.format(stmt=stmt)
@@ -196,13 +198,13 @@ def timeit_alias(args, stdin=None):
     # Minimum time above which compilation time will be reported
     tc_min = 0.1
     t0 = clock()
-    innercode = builtins.compilex(
+    innercode = XSH.builtins.compilex(
         innerstr, filename="<xonsh-timeit>", mode="exec", glbs=ctx
     )
     tc = clock() - t0
     # get inner func
     ns = {}
-    builtins.execx(innercode, glbs=ctx, locs=ns, mode="exec")
+    XSH.builtins.execx(innercode, glbs=ctx, locs=ns, mode="exec")
     timer.inner = ns["inner"]
     # Check if there is a huge difference between the best and worst timings.
     worst_tuning = 0
@@ -229,19 +231,15 @@ def timeit_alias(args, stdin=None):
         # timing is 4 times faster than the slowest timing or not.
         if worst > 4 * best and best > 0 and worst > 1e-5:
             print(
-                (
-                    "The slowest run took {0:0.2f} times longer than the "
-                    "fastest. This could mean that an intermediate result "
-                    "is being cached."
-                ).format(worst / best)
+                f"The slowest run took {worst / best:0.2f} times longer than the "
+                "fastest. This could mean that an intermediate result "
+                "is being cached."
             )
         print(
-            "{0} loops, best of {1}: {2} per loop".format(
-                number, repeat, format_time(best, precision)
-            )
+            f"{number} loops, best of {repeat}: {format_time(best, precision)} per loop"
         )
         if tc > tc_min:
-            print("Compiler time: {0:.2f} s".format(tc))
+            print(f"Compiler time: {tc:.2f} s")
     return
 
 
@@ -327,8 +325,8 @@ def setup_timings(argv):
             times = list(_timings.items())
             times = sorted(times, key=lambda x: x[1])
             width = max(len(s) for s, _ in times) + 2
-            header_format = "|{{:<{}}}|{{:^11}}|{{:^11}}|".format(width)
-            entry_format = "|{{:<{}}}|{{:^11.3f}}|{{:^11.3f}}|".format(width)
+            header_format = f"|{{:<{width}}}|{{:^11}}|{{:^11}}|"
+            entry_format = f"|{{:<{width}}}|{{:^11.3f}}|{{:^11.3f}}|"
             sepline = "|{}|{}|{}|".format("-" * width, "-" * 11, "-" * 11)
             # Print result table
             print(" Debug level: {}".format(os.getenv("XONSH_DEBUG", "Off")))

@@ -1,12 +1,21 @@
 #!/usr/bin/env xonsh
-import argparse
+import sys
 import subprocess
 from typing import List
 
+import xonsh.cli_utils as xcli
 
-$XONSH_DEBUG = 1
+from xonsh.tools import print_color
+import itertools
+
+
 $RAISE_SUBPROC_ERROR = True
 # $XONSH_TRACE_SUBPROC = True
+
+
+def colored_tracer(cmds, **_):
+    cmd = " ".join(itertools.chain.from_iterable(cmds))
+    print_color(f"{{GREEN}}$ {{BLUE}}{cmd}{{RESET}}", file=sys.stderr)
 
 
 def _replace_args(args: List[str], num: int) -> List[str]:
@@ -16,79 +25,39 @@ def _replace_args(args: List[str], num: int) -> List[str]:
     ]
 
 
-def test(ns: argparse.Namespace):
+def test(
+        report_cov: xcli.Arg('--report-coverage', '-c', action="store_true") = False,
+        pytest_args: xcli.Arg(nargs='*')=(),
+):
     """Run pytest.
+
+    Parameters
+    ----------
+    report_cov
+        Report coverage at the end of the test
+    pytest_args
+        arbitrary arguments that gets passed to pytest's invocation.
+        Use %%d to parameterize and prevent overwrite
 
     Examples
     --------
     `xonsh run-tests.xsh -- --junitxml=junit/test-results.%%d.xml`
     """
 
-    run_separately = [
-        'tests/test_main.py',
-        'tests/test_ptk_highlight.py',
-    ]
-
-
-    ignores = []
-    for fname in run_separately:
-        ignores.append('--ignore')
-        ignores.append(fname)
-
-    args = ns.pytest_args
-
-    if ns.report_coverage:
-        ![coverage run -m pytest @(_replace_args(args, 0)) @(ignores)]
-        for index, fname in enumerate(run_separately):
-            ![coverage run --append -m pytest @(_replace_args(args, index+1)) @(fname)]
-        ![coverage report -m]
-        ![coverage xml]
+    if report_cov:
+        $COVERAGE_CORE="sysmon"
+        ![pytest @(_replace_args(pytest_args, 0)) --cov --cov-report=xml --cov-report=term]
     else:
-        ![pytest @(_replace_args(args, 0)) @(ignores)]
-        for index, fname in enumerate(run_separately):
-            ![pytest @(_replace_args(args, index + 1)) @(fname)]
+        # during CI run, some tests take longer to complete on windows
+        ![pytest @(_replace_args(pytest_args, 0)) --durations=5]
 
-
-def qa(ns: argparse.Namespace):
-    """QA checks"""
-
-    echo "---------- Check Black formatter -----------"
-    black --check xonsh xontrib
-
-    echo "---------- Running flake8 ----------"
-    python -m flake8
-
-    echo "---------- Running mypy ----------"
-    mypy --version
-    mypy xonsh
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.set_defaults(func=lambda *args: parser.print_help())
+    parser = xcli.make_parser("test commands")
+    parser.add_command(test)
 
-    commands = parser.add_subparsers()
-
-    test_parser = commands.add_parser('test', help=test.__doc__)
-    test_parser.add_argument(
-        'pytest_args',
-        nargs='*',
-        help="arbitrary arguments that gets passed to pytest's invocation."
-             " Use %%d to parameterize and prevent overwrite "
-    )
-    test_parser.add_argument(
-        '--report-coverage',
-        action="store_true",
-        default=False,
-        help="Report coverage at the end of the test",
-    )
-    test_parser.set_defaults(func=test)
-
-    qa_parser = commands.add_parser('qa', help=qa.__doc__)
-    qa_parser.set_defaults(func=qa)
-
-    args = parser.parse_args()
     try:
-        args.func(args)
+        xcli.dispatch(parser)
     except subprocess.CalledProcessError as ex:
         parser.exit(1, f"Failed with {ex}")

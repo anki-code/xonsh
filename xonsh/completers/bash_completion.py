@@ -1,21 +1,21 @@
 """This module provides the implementation for the retrieving completion results
 from bash.
 """
+
 # developer note: this file should not perform any action on import.
-#                 This file comes from https://github.com/xonsh/py-bash-completion
-#                 and should be edited there!
+# This is to allow users who want to use this completion file as a standalone CLI tool.
+import functools
 import os
-import re
-import sys
-import shlex
-import shutil
 import pathlib
 import platform
-import functools
+import re
+import shlex
+import shutil
 import subprocess
+import sys
 import typing as tp
 
-__version__ = "0.2.7"
+__version__ = "0.2.8"
 
 
 @functools.lru_cache(1)
@@ -87,9 +87,9 @@ def _bash_completion_paths_default():
         gfwp = _git_for_windows_path()
         if gfwp:
             bcd = (
-                os.path.join(gfwp, "usr\\share\\bash-completion\\" "bash_completion"),
+                os.path.join(gfwp, "usr\\share\\bash-completion\\bash_completion"),
                 os.path.join(
-                    gfwp, "mingw64\\share\\git\\completion\\" "git-completion.bash"
+                    gfwp, "mingw64\\share\\git\\completion\\git-completion.bash"
                 ),
             )
         else:
@@ -99,18 +99,18 @@ def _bash_completion_paths_default():
     return bcd
 
 
-_BASH_COMPLETIONS_PATHS_DEFAULT: tp.Tuple[str, ...] = ()
+_BASH_COMPLETIONS_PATHS_DEFAULT: tuple[str, ...] = ()
 
 
 def _get_bash_completions_source(paths=None):
     global _BASH_COMPLETIONS_PATHS_DEFAULT
     if paths is None:
-        if _BASH_COMPLETIONS_PATHS_DEFAULT is None:
+        if not _BASH_COMPLETIONS_PATHS_DEFAULT:
             _BASH_COMPLETIONS_PATHS_DEFAULT = _bash_completion_paths_default()
         paths = _BASH_COMPLETIONS_PATHS_DEFAULT
     for path in map(pathlib.Path, paths):
         if path.is_file():
-            return 'source "{}"'.format(path.as_posix())
+            return f'source "{path.as_posix()}"'
     return None
 
 
@@ -124,7 +124,7 @@ def _bash_get_sep():
         return os.sep
 
 
-_BASH_PATTERN_NEED_QUOTES: tp.Optional[tp.Pattern] = None
+_BASH_PATTERN_NEED_QUOTES: tp.Pattern | None = None
 
 
 def _bash_pattern_need_quotes():
@@ -185,12 +185,12 @@ def _bash_quote_paths(paths, start, end):
             start = end = _bash_quote_to_use(s)
         if os.path.isdir(_bash_expand_path(s)):
             _tail = slash
-        elif end == "":
+        elif end == "" and not s.endswith("="):
             _tail = space
         else:
             _tail = ""
         if start != "" and "r" not in start and backslash in s:
-            start = "r%s" % start
+            start = f"r{start}"
         s = s + _tail
         if end != "":
             if "r" not in start.lower():
@@ -198,7 +198,7 @@ def _bash_quote_paths(paths, start, end):
             if s.endswith(backslash) and not s.endswith(double_backslash):
                 s += backslash
         if end in s:
-            s = s.replace(end, "".join("\\%s" % i for i in end))
+            s = s.replace(end, "".join(f"\\{i}" for i in end))
         out.add(start + s + end)
     return out, need_quotes
 
@@ -288,7 +288,11 @@ def bash_completions(
     paths=None,
     command=None,
     quote_paths=_bash_quote_paths,
-    **kwargs
+    line_args=None,
+    opening_quote="",
+    closing_quote="",
+    arg_index=None,
+    **kwargs,
 ):
     """Completes based on results from BASH completion.
 
@@ -311,7 +315,7 @@ def bash_completions(
         since it lazy-loads individual completion scripts. For both
         bash-completion v1.x and v2.x, paths of individual completion scripts
         (like ``.../completes/ssh``) do not need to be included here. The
-        default values are platform dependent, but sane.
+        default values are platform dependent, but reasonable.
     command : str or None, optional
         The /path/to/bash to use. If None, it will be selected based on the
         from the environment and platform.
@@ -320,6 +324,15 @@ def bash_completions(
         this as the default is acceptable 99+% of the time. This function should
         return a set of the new paths and a boolean for whether the paths were
         quoted.
+    line_args : list of str, optional
+        A list of the args in the current line to be used instead of ``line.split()``.
+        This is usefull with a space in an argument, e.g. ``ls 'a dir/'<TAB>``.
+    opening_quote : str, optional
+        The current argument's opening quote. This is passed to the `quote_paths` function.
+    closing_quote : str, optional
+        The closing quote that **should** be used. This is also passed to the `quote_paths` function.
+    arg_index : int, optional
+        The current prefix's index in the args.
 
     Returns
     -------
@@ -333,27 +346,30 @@ def bash_completions(
     if prefix.startswith("$"):  # do not complete env variables
         return set(), 0
 
-    splt = line.split()
+    splt = line_args or line.split()
     cmd = splt[0]
     cmd = os.path.basename(cmd)
-    idx = n = 0
     prev = ""
-    for n, tok in enumerate(splt):
-        if tok == prefix:
-            idx = line.find(prefix, idx)
-            if idx >= begidx:
-                break
-        prev = tok
-
-    if len(prefix) == 0:
-        prefix_quoted = '""'
-        n += 1
+    if arg_index is not None:
+        n = arg_index
+        if arg_index > 0:
+            prev = splt[arg_index - 1]
     else:
-        prefix_quoted = shlex.quote(prefix)
+        # find `n` and `prev` by ourselves
+        idx = n = 0
+        for n, tok in enumerate(splt):  # noqa
+            if tok == prefix:
+                idx = line.find(prefix, idx)
+                if idx >= begidx:
+                    break
+            prev = tok
+        if len(prefix) == 0:
+            n += 1
+    prefix_quoted = shlex.quote(prefix)
 
     script = BASH_COMPLETE_SCRIPT.format(
         source=source,
-        line=" ".join(shlex.quote(p) for p in splt),
+        line=" ".join(shlex.quote(p) for p in splt if p),
         comp_line=shlex.quote(line),
         n=n,
         cmd=shlex.quote(cmd),
@@ -371,6 +387,7 @@ def bash_completions(
             stderr=subprocess.PIPE,
             env=env,
         )
+        out = [line for line in out.splitlines() if line.strip()]
         if not out:
             raise ValueError
     except (
@@ -381,7 +398,6 @@ def bash_completions(
     ):
         return set(), 0
 
-    out = out.splitlines()
     complete_stmt = out[0]
     out = set(out[1:])
 
@@ -390,6 +406,12 @@ def bash_completions(
 
     # Ensure input to `commonprefix` is a list (now required by Python 3.6)
     commprefix = os.path.commonprefix(list(out))
+
+    if prefix.startswith("~") and commprefix and prefix not in commprefix:
+        home_ = os.path.expanduser("~")
+        out = {f"~/{os.path.relpath(p, home_)}" for p in out}
+        commprefix = f"~/{os.path.relpath(commprefix, home_)}"
+
     strip_len = 0
     strip_prefix = prefix.strip("\"'")
     while strip_len < len(strip_prefix) and strip_len < len(commprefix):
@@ -398,9 +420,19 @@ def bash_completions(
         strip_len += 1
 
     if "-o noquote" not in complete_stmt:
-        out, need_quotes = quote_paths(out, "", "")
+        out, need_quotes = quote_paths(out, opening_quote, closing_quote)
     if "-o nospace" in complete_stmt:
-        out = set([x.rstrip() for x in out])
+        out = {x.rstrip() for x in out}
+
+    # For arguments like 'status=progress', the completion script only returns
+    # the part after '=' in the completion results. This causes the strip_len
+    # to be incorrectly calculated, so it needs to be fixed here
+    if "=" in prefix and "=" not in commprefix:
+        strip_len = prefix.index("=") + 1
+    # Fix case where remote git branch is being deleted
+    # (e.g. 'git push origin :dev-branch')
+    elif ":" in prefix and ":" not in commprefix:
+        strip_len = prefix.index(":") + 1
 
     return out, max(len(prefix) - strip_len, 0)
 

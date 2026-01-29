@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-# -*- coding: ascii -*-
-"""The xonsh installer."""
 # Note: Do not embed any non-ASCII characters in this file until pip has been
 # fixed. See https://github.com/xonsh/xonsh/issues/487.
 import os
-import sys
 import subprocess
+import sys
 
-from setuptools import setup, find_packages
-from setuptools.command.sdist import sdist
-from setuptools.command.install import install
-from setuptools.command.develop import develop
+from setuptools import setup
 from setuptools.command.build_py import build_py
+from setuptools.command.develop import develop
+from setuptools.command.install import install
 from setuptools.command.install_scripts import install_scripts
+from setuptools.command.sdist import sdist
+from wheel.bdist_wheel import bdist_wheel
 
 TABLES = [
     "xonsh/lexer_table.py",
     "xonsh/parser_table.py",
-    "xonsh/__amalgam__.py",
-    "xonsh/completers/__amalgam__.py",
-    "xonsh/history/__amalgam__.py",
-    "xonsh/prompt/__amalgam__.py",
-    "xonsh/procs/__amalgam__.py",
+    "xonsh/completion_parser_table.py",
 ]
+
+
+def python_tag():
+    ver = sys.version_info
+    return f"py{ver.major}{ver.minor}"
 
 
 def clean_tables():
@@ -34,29 +34,6 @@ def clean_tables():
 
 
 os.environ["XONSH_DEBUG"] = "1"
-from xonsh import __version__ as XONSH_VERSION
-
-
-def amalgamate_source():
-    """Amalgamates source files."""
-    sys.path.insert(0, os.path.dirname(__file__))
-    try:
-        import amalgamate
-    except ImportError:
-        print("Could not import amalgamate, skipping.", file=sys.stderr)
-        return
-    amalgamate.main(
-        [
-            "amalgamate",
-            "--debug=XONSH_DEBUG",
-            "xonsh",
-            "xonsh.completers",
-            "xonsh.history",
-            "xonsh.prompt",
-            "xonsh.procs",
-        ]
-    )
-    sys.path.pop(0)
 
 
 def build_tables():
@@ -65,12 +42,17 @@ def build_tables():
     root_dir = os.path.abspath(os.path.dirname(__file__))
     sys.path.insert(0, root_dir)
     from xonsh.parser import Parser
+    from xonsh.parsers.completion_context import CompletionContextParser
 
     Parser(
-        lexer_table="lexer_table",
         yacc_table="parser_table",
         outputdir=os.path.join(root_dir, "xonsh"),
         yacc_debug=True,
+    )
+    CompletionContextParser(
+        yacc_table="completion_parser_table",
+        outputdir=os.path.join(root_dir, "xonsh"),
+        debug=True,
     )
     sys.path.pop(0)
 
@@ -105,7 +87,7 @@ def dirty_version():
         _date = ""
         print("failed to get commit date", file=sys.stderr)
     with open("xonsh/dev.githash", "w") as f:
-        f.write("{}|{}".format(sha, _date))
+        f.write(f"{sha}|{_date}")
     print("wrote git version: " + sha, file=sys.stderr)
     return True
 
@@ -116,13 +98,13 @@ ORIGINAL_VERSION_LINE = None
 def replace_version(N):
     """Replace version in `__init__.py` with devN suffix"""
     global ORIGINAL_VERSION_LINE
-    with open("xonsh/__init__.py", "r") as f:
+    with open("xonsh/__init__.py") as f:
         raw = f.read()
     lines = raw.splitlines()
     msg_assert = "__version__ must be the first line of the __init__.py"
     assert "__version__" in lines[0], msg_assert
     ORIGINAL_VERSION_LINE = lines[0]
-    lines[0] = lines[0].rstrip(' "') + '.dev{}"'.format(N)
+    lines[0] = lines[0].rstrip(' "') + f'.dev{N}"'
     upd = "\n".join(lines) + "\n"
     with open("xonsh/__init__.py", "w") as f:
         f.write(upd)
@@ -132,7 +114,7 @@ def restore_version():
     """If we touch the version in __init__.py discard changes after install."""
     if ORIGINAL_VERSION_LINE is None:
         return
-    with open("xonsh/__init__.py", "r") as f:
+    with open("xonsh/__init__.py") as f:
         raw = f.read()
     lines = raw.splitlines()
     lines[0] = ORIGINAL_VERSION_LINE
@@ -147,12 +129,18 @@ class xbuild_py(build_py):
     def run(self):
         clean_tables()
         build_tables()
-        amalgamate_source()
         # add dirty version number
         dirty = dirty_version()
         super().run()
         if dirty:
             restore_version()
+
+
+class xbdist(bdist_wheel):
+    def initialize_options(self):
+        super().initialize_options()
+        # because XonshParser will be build for each minor python version, we need separate builds
+        self.python_tag = python_tag()
 
 
 class xinstall(install):
@@ -164,7 +152,6 @@ class xinstall(install):
     def run(self):
         clean_tables()
         build_tables()
-        amalgamate_source()
         # add dirty version number
         dirty = dirty_version()
 
@@ -179,7 +166,6 @@ class xsdist(sdist):
     def make_release_tree(self, basedir, files):
         clean_tables()
         build_tables()
-        amalgamate_source()
         dirty = dirty_version()
         files.extend(TABLES)
         super().make_release_tree(basedir, files)
@@ -219,27 +205,13 @@ class install_scripts_rewrite(install_scripts):
                     bs_cmd = self.get_finalized_command("build_scripts")
                     exec_param = getattr(bs_cmd, "executable", None)
 
-                    with open(file, "r") as f:
+                    with open(file) as f:
                         content = f.read()
 
-                    processed = content.replace(
-                        " python3 ", ' "{}" '.format(exec_param)
-                    )
+                    processed = content.replace(" python3 ", f' "{exec_param}" ')
 
                     with open(file, "w") as f:
                         f.write(processed)
-
-
-# The custom install needs to be used on Windows machines
-cmdclass = {
-    "install": xinstall,
-    "sdist": xsdist,
-    "build_py": xbuild_py,
-}
-if os.name == "nt":
-    cmdclass["install_scripts"] = install_scripts_quoted_shebang
-else:
-    cmdclass["install_scripts"] = install_scripts_rewrite
 
 
 class xdevelop(develop):
@@ -256,10 +228,22 @@ class xdevelop(develop):
     def install_script(self, dist, script_name, script_text, dev_path=None):
         if script_name == "xon.sh":
             # change default python3 to the concrete python binary used to install/develop inside xon.sh script
-            script_text = script_text.replace(
-                " python3 ", ' "{}" '.format(sys.executable)
-            )
+            script_text = script_text.replace(" python3 ", f' "{sys.executable}" ')
         super().install_script(dist, script_name, script_text, dev_path)
+
+
+# The custom install needs to be used on Windows machines
+cmdclass = {
+    "install": xinstall,
+    "sdist": xsdist,
+    "build_py": xbuild_py,
+    "develop": xdevelop,
+    "bdist_wheel": xbdist,
+}
+if os.name == "nt":
+    cmdclass["install_scripts"] = install_scripts_quoted_shebang
+else:
+    cmdclass["install_scripts"] = install_scripts_rewrite
 
 
 def main():
@@ -272,89 +256,9 @@ def main():
             print(logo)
     except UnicodeEncodeError:
         pass
-    with open(os.path.join(os.path.dirname(__file__), "README.rst"), "r") as f:
-        readme = f.read()
-    scripts = ["scripts/xon.sh"]
-    skw = dict(
-        name="xonsh",
-        description="Python-powered, cross-platform, Unix-gazing shell",
-        long_description=readme,
-        license="BSD",
-        version=XONSH_VERSION,
-        author="Anthony Scopatz",
-        maintainer="Anthony Scopatz",
-        author_email="scopatz@gmail.com",
-        url="https://github.com/xonsh/xonsh",
-        platforms="Cross Platform",
-        classifiers=["Programming Language :: Python :: 3"],
-        packages=[
-            "xonsh",
-            "xonsh.ply.ply",
-            "xonsh.ptk_shell",
-            "xonsh.ptk2",
-            "xonsh.procs",
-            "xonsh.parsers",
-            "xonsh.xoreutils",
-            "xontrib",
-            "xonsh.completers",
-            "xonsh.history",
-            "xonsh.prompt",
-            "xonsh.lib",
-            "xonsh.webconfig",
-        ],
-        package_dir={
-            "xonsh": "xonsh",
-            "xontrib": "xontrib",
-            "xonsh.lib": "xonsh/lib",
-            "xonsh.webconfig": "xonsh/webconfig",
-        },
-        package_data={
-            "xonsh": ["*.json", "*.githash"],
-            "xontrib": ["*.xsh"],
-            "xonsh.lib": ["*.xsh"],
-            "xonsh.webconfig": [
-                "*.html",
-                "js/app.min.js",
-                "js/bootstrap.min.css",
-                "js/LICENSE-bootstrap",
-            ],
-        },
+    setup(
         cmdclass=cmdclass,
-        scripts=scripts,
     )
-    # We used to avoid setuptools 'console_scripts' due to startup performance
-    # concerns which have since been resolved, so long as install is done
-    # via `pip install .` and not `python setup.py install`.
-    skw["entry_points"] = {
-        "pygments.lexers": [
-            "xonsh = xonsh.pyghooks:XonshLexer",
-            "xonshcon = xonsh.pyghooks:XonshConsoleLexer",
-        ],
-        "pytest11": ["xonsh = xonsh.pytest_plugin"],
-        "console_scripts": [
-            "xonsh = xonsh.main:main",
-            "xonsh-cat = xonsh.xoreutils.cat:cat_main",
-        ],
-    }
-    skw["cmdclass"]["develop"] = xdevelop
-    skw["extras_require"] = {
-        "ptk": ["prompt-toolkit>=3.0", "pyperclip"],
-        "pygments": ["pygments>=2.2"],
-        "mac": ["gnureadline"],
-        "linux": ["distro"],
-        "proctitle": ["setproctitle"],
-        "zipapp": ['importlib_resources; python_version < "3.7"'],
-        "full": [
-            "prompt-toolkit>=3",
-            "pyperclip",
-            "pygments>=2.2",
-            "distro; platform_system=='Linux'",  # PEP 508 platform specifiers
-            "setproctitle; platform_system=='Windows'",
-            "gnureadline; platform_system=='Darwin'",
-        ],
-    }
-    skw["python_requires"] = ">=3.6"
-    setup(**skw)
 
 
 if __name__ == "__main__":

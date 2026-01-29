@@ -1,28 +1,30 @@
 """Tools for caching xonsh code."""
-import os
-import sys
+
 import hashlib
 import marshal
-import builtins
+import os
+import sys
 
 from xonsh import __version__ as XONSH_VERSION
-from xonsh.lazyasd import lazyobject
+from xonsh.built_ins import XSH
+from xonsh.lib.lazyasd import lazyobject
 from xonsh.platform import PYTHON_VERSION_INFO_BYTES
+from xonsh.tools import is_writable_file, print_warning
 
 
-def _splitpath(path, sofar=[]):
+def _splitpath(path, sofar=()):
     folder, path = os.path.split(path)
     if path == "":
         return sofar[::-1]
     elif folder == "":
-        return (sofar + [path])[::-1]
+        return (sofar + (path,))[::-1]
     else:
-        return _splitpath(folder, sofar + [path])
+        return _splitpath(folder, sofar + (path,))
 
 
 @lazyobject
 def _CHARACTER_MAP():
-    cmap = {chr(o): "_%s" % chr(o + 32) for o in range(65, 91)}
+    cmap = {chr(o): "_" + chr(o + 32) for o in range(65, 91)}
     cmap.update({".": "_.", "_": "__"})
     return cmap
 
@@ -31,13 +33,8 @@ def _cache_renamer(path, code=False):
     if not code:
         path = os.path.realpath(path)
     o = ["".join(_CHARACTER_MAP.get(i, i) for i in w) for w in _splitpath(path)]
-    o[-1] = "{}.{}".format(o[-1], sys.implementation.cache_tag)
+    o[-1] = f"{o[-1]}.{sys.implementation.cache_tag}"
     return o
-
-
-def _make_if_not_exists(dirname):
-    if not os.path.isdir(dirname):
-        os.makedirs(dirname)
 
 
 def should_use_cache(execer, mode):
@@ -47,16 +44,16 @@ def should_use_cache(execer, mode):
     """
     if mode == "exec":
         return (execer.scriptcache or execer.cacheall) and (
-            builtins.__xonsh__.env["XONSH_CACHE_SCRIPTS"]
-            or builtins.__xonsh__.env["XONSH_CACHE_EVERYTHING"]
+            XSH.env["XONSH_CACHE_SCRIPTS"] or XSH.env["XONSH_CACHE_EVERYTHING"]
         )
     else:
-        return execer.cacheall or builtins.__xonsh__.env["XONSH_CACHE_EVERYTHING"]
+        return execer.cacheall or XSH.env["XONSH_CACHE_EVERYTHING"]
 
 
 def run_compiled_code(code, glb, loc, mode):
     """
-    Helper to run code in a given mode and context
+    Helper to run code in a given mode and context.
+    Returns a sys.exc_info() triplet in case the code raises an exception, or (None, None, None) otherwise.
     """
     if code is None:
         return
@@ -64,7 +61,14 @@ def run_compiled_code(code, glb, loc, mode):
         func = exec
     else:
         func = eval
-    func(code, glb, loc)
+    try:
+        func(code, glb, loc)
+        return (None, None, None)
+    except BaseException:
+        type, value, traceback = sys.exc_info()
+        # strip off the current frame as the traceback should only show user code
+        traceback = traceback.tb_next
+        return type, value, traceback
 
 
 def get_cache_filename(fname, code=True):
@@ -77,7 +81,7 @@ def get_cache_filename(fname, code=True):
     The ``code`` switch should be true if we should use the code store rather
     than the script store.
     """
-    datadir = builtins.__xonsh__.env["XONSH_DATA_DIR"]
+    datadir = XSH.env["XONSH_DATA_DIR"]
     cachedir = os.path.join(
         datadir, "xonsh_code_cache" if code else "xonsh_script_cache"
     )
@@ -91,7 +95,14 @@ def update_cache(ccode, cache_file_name):
     represented by ``ccode``.
     """
     if cache_file_name is not None:
-        _make_if_not_exists(os.path.dirname(cache_file_name))
+        if not is_writable_file(cache_file_name):
+            if XSH.env.get("XONSH_DEBUG", "False"):
+                print_warning(
+                    f"update_cache: Cache file is not writable: {cache_file_name}\n"
+                    f"Set $XONSH_CACHE_SCRIPTS=0, $XONSH_CACHE_EVERYTHING=0 to disable cache."
+                )
+            return
+        os.makedirs(os.path.dirname(cache_file_name), exist_ok=True)
         with open(cache_file_name, "wb") as cfile:
             cfile.write(XONSH_VERSION.encode() + b"\n")
             cfile.write(bytes(PYTHON_VERSION_INFO_BYTES) + b"\n")
@@ -111,10 +122,14 @@ def compile_code(filename, code, execer, glb, loc, mode):
     """
     Wrapper for ``execer.compile`` to compile the given code
     """
+
+    if filename.endswith(".py") and mode == "exec":
+        return compile(code, filename, mode)
+
+    if not code.endswith("\n"):
+        code += "\n"
+    old_filename = execer.filename
     try:
-        if not code.endswith("\n"):
-            code += "\n"
-        old_filename = execer.filename
         execer.filename = filename
         ccode = execer.compile(code, glbs=glb, locs=loc, mode=mode, filename=filename)
     except Exception:
@@ -148,6 +163,7 @@ def run_script_with_cache(filename, execer, glb=None, loc=None, mode="exec"):
     """
     Run a script, using a cached version if it exists (and the source has not
     changed), and updating the cache as necessary.
+    See run_compiled_code for the return value.
     """
     run_cached = False
     use_cache = should_use_cache(execer, mode)
@@ -155,11 +171,12 @@ def run_script_with_cache(filename, execer, glb=None, loc=None, mode="exec"):
     if use_cache:
         run_cached, ccode = script_cache_check(filename, cachefname)
     if not run_cached:
-        with open(filename, "r", encoding="utf-8") as f:
+        with open(filename, encoding="utf-8") as f:
             code = f.read()
         ccode = compile_code(filename, code, execer, glb, loc, mode)
-        update_cache(ccode, cachefname)
-    run_compiled_code(ccode, glb, loc, mode)
+        if use_cache:
+            update_cache(ccode, cachefname)
+    return run_compiled_code(ccode, glb, loc, mode)
 
 
 def code_cache_name(code):
@@ -167,10 +184,8 @@ def code_cache_name(code):
     Return an appropriate spoofed filename for the given code.
     """
     if isinstance(code, str):
-        _code = code.encode()
-    else:
-        _code = code
-    return hashlib.md5(_code).hexdigest()
+        code = code.encode()
+    return hashlib.md5(code).hexdigest()
 
 
 def code_cache_check(cachefname):
@@ -192,10 +207,13 @@ def code_cache_check(cachefname):
     return run_cached, ccode
 
 
-def run_code_with_cache(code, execer, glb=None, loc=None, mode="exec"):
+def run_code_with_cache(
+    code, display_filename, execer, glb=None, loc=None, mode="exec"
+):
     """
     Run a piece of code, using a cached version if it exists, and updating the
     cache as necessary.
+    See run_compiled_code for the return value.
     """
     use_cache = should_use_cache(execer, mode)
     filename = code_cache_name(code)
@@ -204,6 +222,6 @@ def run_code_with_cache(code, execer, glb=None, loc=None, mode="exec"):
     if use_cache:
         run_cached, ccode = code_cache_check(cachefname)
     if not run_cached:
-        ccode = compile_code(filename, code, execer, glb, loc, mode)
+        ccode = compile_code(display_filename, code, execer, glb, loc, mode)
         update_cache(ccode, cachefname)
-    run_compiled_code(ccode, glb, loc, mode)
+    return run_compiled_code(ccode, glb, loc, mode)

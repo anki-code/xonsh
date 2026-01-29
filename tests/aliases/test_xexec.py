@@ -1,8 +1,13 @@
 import os
-import inspect
+
 import pytest
 
 from xonsh.aliases import xexec
+
+
+@pytest.fixture(autouse=True)
+def auto_use_xession(xession):
+    return xession
 
 
 @pytest.fixture
@@ -13,18 +18,14 @@ def mockexecvpe(monkeypatch):
     monkeypatch.setattr(os, "execvpe", mocked_execvpe)
 
 
-def test_noargs(mockexecvpe):
-    assert xexec([]) == (None, "xonsh: exec: no args specified\n", 1)
-
-
 def test_missing_command(mockexecvpe):
+    assert xexec([]) == (None, "xonsh: exec: no command specified\n", 1)
     assert xexec(["-a", "foo"]) == (None, "xonsh: exec: no command specified\n", 1)
     assert xexec(["-c"]) == (None, "xonsh: exec: no command specified\n", 1)
     assert xexec(["-l"]) == (None, "xonsh: exec: no command specified\n", 1)
 
 
 def test_command_not_found(monkeypatch):
-
     dummy_error_msg = (
         "This is dummy error message, file not found or something like that"
     )
@@ -37,14 +38,20 @@ def test_command_not_found(monkeypatch):
 
     assert xexec([command]) == (
         None,
-        "xonsh: exec: file not found: {}: {}" "\n".format(dummy_error_msg, command),
+        f"xonsh: exec: file not found: {dummy_error_msg}: {command}\n",
         1,
     )
 
 
-def test_help(mockexecvpe):
-    assert xexec(["-h"]) == inspect.getdoc(xexec)
-    assert xexec(["--help"]) == inspect.getdoc(xexec)
+@pytest.mark.parametrize("cmd", ["-h", "--help"])
+def test_help(cmd, mockexecvpe, capsys, mocker):
+    usage = "usage: xexec [-h] [-l] [-c] [-a NAME] ..."
+    exit_mock = mocker.patch("argparse._sys.exit")
+    xexec([cmd])
+    cap = capsys.readouterr()
+
+    assert exit_mock.called
+    assert usage in cap.out
 
 
 def test_a_switch(monkeypatch):

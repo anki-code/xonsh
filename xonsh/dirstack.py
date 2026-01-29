@@ -1,23 +1,46 @@
-# -*- coding: utf-8 -*-
-"""Directory stack and associated utilities for the xonsh shell."""
-import argparse
-import builtins
+"""Directory stack and associated utilities for the xonsh shell.
+https://www.gnu.org/software/bash/manual/html_node/Directory-Stack-Builtins.html
+"""
+
+import contextlib
 import glob
 import os
 import subprocess
 import typing as tp
 
+from xonsh.built_ins import XSH
+from xonsh.cli_utils import Annotated, Arg, ArgParserAlias
 from xonsh.events import events
-from xonsh.lazyasd import lazyobject
 from xonsh.platform import ON_WINDOWS
 from xonsh.tools import get_sep
 
-DIRSTACK: tp.List[str] = []
+DIRSTACK: list[str] = []
 """A list containing the currently remembered directories."""
-_unc_tempDrives: tp.Dict[str, str] = {}
+_unc_tempDrives: dict[str, str] = {}
 """ drive: sharePath for temp drive letters we create for UNC mapping"""
 
 
+@contextlib.contextmanager
+def _win_reg_key(*paths, **kwargs):
+    import winreg
+
+    key = winreg.OpenKey(*paths, **kwargs)
+    yield key
+    winreg.CloseKey(key)
+
+
+def _query_win_reg_key(*paths):
+    import winreg
+
+    *paths, name = paths
+
+    with contextlib.suppress(OSError):
+        with _win_reg_key(*paths) as key:
+            wval, wtype = winreg.QueryValueEx(key, name)
+            return wval
+
+
+@tp.no_type_check
 def _unc_check_enabled() -> bool:
     r"""Check whether CMD.EXE is enforcing no-UNC-as-working-directory check.
 
@@ -32,26 +55,18 @@ def _unc_check_enabled() -> bool:
 
     import winreg
 
-    wval = None
-
-    try:
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER, r"software\microsoft\command processor"
-        )
-        wval, wtype = winreg.QueryValueEx(key, "DisableUNCCheck")
-        winreg.CloseKey(key)
-    except OSError:
-        pass
+    wval = _query_win_reg_key(
+        winreg.HKEY_CURRENT_USER,
+        r"software\microsoft\command processor",
+        "DisableUNCCheck",
+    )
 
     if wval is None:
-        try:
-            key2 = winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE, r"software\microsoft\command processor"
-            )
-            wval, wtype = winreg.QueryValueEx(key2, "DisableUNCCheck")
-            winreg.CloseKey(key2)
-        except OSError as e:  # NOQA
-            pass
+        wval = _query_win_reg_key(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"software\microsoft\command processor",
+            "DisableUNCCheck",
+        )
 
     return False if wval else True
 
@@ -85,21 +100,19 @@ def _unc_map_temp_drive(unc_path) -> str:
 
     if not _unc_check_enabled():
         return unc_path
-    else:
-        unc_share, rem_path = os.path.splitdrive(unc_path)
-        unc_share = unc_share.casefold()
-        for d in _unc_tempDrives:
-            if _unc_tempDrives[d] == unc_share:
-                return os.path.join(d, rem_path)
+    unc_share, rem_path = os.path.splitdrive(unc_path)
+    unc_share = unc_share.casefold()
+    for d in _unc_tempDrives:
+        if _unc_tempDrives[d] == unc_share:
+            return os.path.join(d, rem_path)
 
-        for dord in range(ord("z"), ord("a"), -1):
-            d = chr(dord) + ":"
-            if not os.path.isdir(d):  # find unused drive letter starting from z:
-                subprocess.check_output(
-                    ["NET", "USE", d, unc_share], universal_newlines=True
-                )
-                _unc_tempDrives[d] = unc_share
-                return os.path.join(d, rem_path)
+    for dord in range(ord("z"), ord("a"), -1):
+        d = chr(dord) + ":"
+        if not os.path.isdir(d):  # find unused drive letter starting from z:
+            subprocess.check_output(["NET", "USE", d, unc_share], text=True)
+            _unc_tempDrives[d] = unc_share
+            return os.path.join(d, rem_path)
+    raise RuntimeError(f"Failed to find a drive for UNC Path({unc_path})")
 
 
 def _unc_unmap_temp_drive(left_drive, cwd):
@@ -122,9 +135,7 @@ def _unc_unmap_temp_drive(left_drive, cwd):
             return
 
     _unc_tempDrives.pop(left_drive)
-    subprocess.check_output(
-        ["NET", "USE", left_drive, "/delete"], universal_newlines=True
-    )
+    subprocess.check_output(["NET", "USE", left_drive, "/delete"], text=True)
 
 
 events.doc(
@@ -133,6 +144,16 @@ events.doc(
 on_chdir(olddir: str, newdir: str) -> None
 
 Fires when the current directory is changed for any reason.
+
+.. code-block:: python
+
+    @events.on_chdir
+    def _source_env_xsh(olddir, newdir):
+        '''Source `env.xsh` file if it's exist in the new directory.'''
+        env_file = @.imp.pathlib.Path(newdir) / 'env.xsh'
+        if env_file.exists():
+            print(f'Source {env_file}')
+            source @(env_file)
 """,
 )
 
@@ -140,12 +161,12 @@ Fires when the current directory is changed for any reason.
 def _get_cwd():
     try:
         return os.getcwd()
-    except (OSError, FileNotFoundError):
+    except OSError:
         return None
 
 
 def _change_working_directory(newdir, follow_symlinks=False):
-    env = builtins.__xonsh__.env
+    env = XSH.env
     old = env["PWD"]
     new = os.path.join(old, newdir)
 
@@ -155,7 +176,7 @@ def _change_working_directory(newdir, follow_symlinks=False):
 
     try:
         os.chdir(absnew)
-    except (OSError, FileNotFoundError):
+    except OSError:
         if new.endswith(get_sep()):
             new = new[:-1]
         if os.path.basename(new) == "..":
@@ -180,10 +201,10 @@ def _try_cdpath(apath):
     # a second $ cd xonsh has no effects, to move in the nested xonsh
     # in bash a full $ cd ./xonsh is needed.
     # In xonsh a relative folder is always preferred.
-    env = builtins.__xonsh__.env
+    env = XSH.env
     cdpaths = env.get("CDPATH")
     for cdp in cdpaths:
-        globber = builtins.__xonsh__.expand_path(os.path.join(cdp, apath))
+        globber = XSH.expand_path(os.path.join(cdp, apath))
         for cdpath_prefixed_path in glob.iglob(globber):
             return cdpath_prefixed_path
     return apath
@@ -195,7 +216,7 @@ def cd(args, stdin=None):
     If no directory is specified (i.e. if `args` is None) then this
     changes to the current user's home directory.
     """
-    env = builtins.__xonsh__.env
+    env = XSH.env
     oldpwd = env.get("OLDPWD", None)
     cwd = env["PWD"]
 
@@ -205,7 +226,7 @@ def cd(args, stdin=None):
         del args[0]
 
     if len(args) == 0:
-        d = os.path.expanduser("~")
+        d = env.get("HOME", os.path.expanduser("~"))
     elif len(args) == 1:
         d = os.path.expanduser(args[0])
         if not os.path.isdir(d):
@@ -218,11 +239,11 @@ def cd(args, stdin=None):
                 try:
                     num = int(d[1:])
                 except ValueError:
-                    return "", "cd: Invalid destination: {0}\n".format(d), 1
+                    return "", f"cd: Invalid destination: {d}\n", 1
                 if num == 0:
                     return None, None, 0
                 elif num < 0:
-                    return "", "cd: Invalid destination: {0}\n".format(d), 1
+                    return "", f"cd: Invalid destination: {d}\n", 1
                 elif num > len(DIRSTACK):
                     e = "cd: Too few elements in dirstack ({0} elements)\n"
                     return "", e.format(len(DIRSTACK)), 1
@@ -234,18 +255,18 @@ def cd(args, stdin=None):
         return (
             "",
             (
-                "cd takes 0 or 1 arguments, not {0}. An additional `-P` "
+                f"cd takes 0 or 1 arguments, not {len(args)}. An additional `-P` "
                 "flag can be passed in first position to follow symlinks."
-                "\n".format(len(args))
+                "\n"
             ),
             1,
         )
     if not os.path.exists(d):
-        return "", "cd: no such file or directory: {0}\n".format(d), 1
+        return "", f"cd: no such file or directory: {d}\n", 1
     if not os.path.isdir(d):
-        return "", "cd: {0} is not a directory\n".format(d), 1
+        return "", f"cd: {d} is not a directory\n", 1
     if not os.access(d, os.X_OK):
-        return "", "cd: permission denied: {0}\n".format(d), 1
+        return "", f"cd: permission denied: {d}\n", 1
     if (
         ON_WINDOWS
         and _is_unc_path(d)
@@ -269,45 +290,39 @@ def cd(args, stdin=None):
     return None, None, 0
 
 
-@lazyobject
-def pushd_parser():
-    parser = argparse.ArgumentParser(prog="pushd")
-    parser.add_argument("dir", nargs="?")
-    parser.add_argument(
-        "-n",
-        dest="cd",
-        help="Suppresses the normal change of directory when"
-        " adding directories to the stack, so that only the"
-        " stack is manipulated.",
-        action="store_false",
-    )
-    parser.add_argument(
-        "-q",
-        dest="quiet",
-        help="Do not call dirs, regardless of $PUSHD_SILENT",
-        action="store_true",
-    )
-    return parser
-
-
-def pushd(args, stdin=None):
-    r"""xonsh command: pushd
-
-    Adds a directory to the top of the directory stack, or rotates the stack,
+def pushd_fn(
+    dir_or_n: Annotated[str | None, Arg(metavar="+N|-N|dir", nargs="?")] = None,
+    cd=True,
+    quiet=False,
+):
+    r"""Adds a directory to the top of the directory stack, or rotates the stack,
     making the new top of the stack the current working directory.
 
     On Windows, if the path is a UNC path (begins with `\\<server>\<share>`) and if the `DisableUNCCheck` registry
     value is not enabled, creates a temporary mapped drive letter and sets the working directory there, emulating
     behavior of `PUSHD` in `CMD.EXE`
+
+    Parameters
+    ----------
+    dir_or_n
+        * dir :
+            Makes dir be the top of the stack,
+            making it the new current directory as if it had been supplied as an argument to the cd builtin.
+        * +N :
+            Brings the Nth directory (counting from the left of the list printed by dirs, starting with zero)
+            to the top of the list by rotating the stack.
+        * -N :
+            Brings the Nth directory (counting from the right of the list printed by dirs, starting with zero)
+            to the top of the list by rotating the stack.
+    cd : -n, --cd
+        Suppresses the normal change of directory when adding directories to the stack,
+        so that only the stack is manipulated.
+    quiet : -q, --quiet
+        Do not call dirs, regardless of $PUSHD_SILENT
     """
     global DIRSTACK
 
-    try:
-        args = pushd_parser.parse_args(args)
-    except SystemExit:
-        return None, None, 1
-
-    env = builtins.__xonsh__.env
+    env = XSH.env
 
     pwd = env["PWD"]
 
@@ -318,45 +333,45 @@ def pushd(args, stdin=None):
         BACKWARD = "+"
         FORWARD = "-"
 
-    if args.dir is None:
+    if dir_or_n is None:
         try:
-            new_pwd = DIRSTACK.pop(0)
+            new_pwd: str | None = DIRSTACK.pop(0)
         except IndexError:
             e = "pushd: Directory stack is empty\n"
             return None, e, 1
-    elif os.path.isdir(args.dir):
-        new_pwd = args.dir
+    elif os.path.isdir(dir_or_n):
+        new_pwd = dir_or_n
     else:
         try:
-            num = int(args.dir[1:])
+            num = int(dir_or_n[1:])
         except ValueError:
             e = "Invalid argument to pushd: {0}\n"
-            return None, e.format(args.dir), 1
+            return None, e.format(dir_or_n), 1
 
         if num < 0:
             e = "Invalid argument to pushd: {0}\n"
-            return None, e.format(args.dir), 1
+            return None, e.format(dir_or_n), 1
 
         if num > len(DIRSTACK):
             e = "Too few elements in dirstack ({0} elements)\n"
             return None, e.format(len(DIRSTACK)), 1
-        elif args.dir.startswith(FORWARD):
+        elif dir_or_n.startswith(FORWARD):
             if num == len(DIRSTACK):
                 new_pwd = None
             else:
                 new_pwd = DIRSTACK.pop(len(DIRSTACK) - 1 - num)
-        elif args.dir.startswith(BACKWARD):
+        elif dir_or_n.startswith(BACKWARD):
             if num == 0:
                 new_pwd = None
             else:
                 new_pwd = DIRSTACK.pop(num - 1)
         else:
             e = "Invalid argument to pushd: {0}\n"
-            return None, e.format(args.dir), 1
+            return None, e.format(dir_or_n), 1
     if new_pwd is not None:
         if ON_WINDOWS and _is_unc_path(new_pwd):
             new_pwd = _unc_map_temp_drive(new_pwd)
-        if args.cd:
+        if cd:
             DIRSTACK.insert(0, os.path.expanduser(pwd))
             _change_working_directory(new_pwd)
         else:
@@ -366,47 +381,39 @@ def pushd(args, stdin=None):
     if len(DIRSTACK) > maxsize:
         DIRSTACK = DIRSTACK[:maxsize]
 
-    if not args.quiet and not env.get("PUSHD_SILENT"):
+    if not quiet and not env.get("PUSHD_SILENT"):
         return dirs([], None)
 
     return None, None, 0
 
 
-@lazyobject
-def popd_parser():
-    parser = argparse.ArgumentParser(prog="popd")
-    parser.add_argument("dir", nargs="?")
-    parser.add_argument(
-        "-n",
-        dest="cd",
-        help="Suppresses the normal change of directory when"
-        " adding directories to the stack, so that only the"
-        " stack is manipulated.",
-        action="store_false",
-    )
-    parser.add_argument(
-        "-q",
-        dest="quiet",
-        help="Do not call dirs, regardless of $PUSHD_SILENT",
-        action="store_true",
-    )
-    return parser
+pushd = ArgParserAlias(func=pushd_fn, has_args=True, prog="pushd")
 
 
-def popd(args, stdin=None):
-    """
-    xonsh command: popd
+def popd_fn(
+    nth: Annotated[str | None, Arg(metavar="+N|-N", nargs="?")] = None,
+    cd=True,
+    quiet=False,
+):
+    """When no arguments are given, popd removes the top directory from the stack
+    and performs a cd to the new top directory.
+    The elements are numbered from 0 starting at the first directory listed with ``dirs``;
+    that is, popd is equivalent to popd +0.
 
-    Removes entries from the directory stack.
+    Parameters
+    ----------
+    cd : -n, --cd
+        Suppresses the normal change of directory when removing directories from the stack,
+        so that only the stack is manipulated.
+    nth
+        Removes the Nth directory (counting from the left/right of the list printed by dirs w.r.t. -/+ prefix),
+        starting with zero.
+    quiet : -q, --quiet
+        Do not call dirs, regardless of $PUSHD_SILENT
     """
     global DIRSTACK
 
-    try:
-        args = pushd_parser.parse_args(args)
-    except SystemExit:
-        return None, None, 1
-
-    env = builtins.__xonsh__.env
+    env = XSH.env
 
     if env.get("PUSHD_MINUS"):
         BACKWARD = "-"
@@ -415,7 +422,8 @@ def popd(args, stdin=None):
         BACKWARD = "-"
         FORWARD = "+"
 
-    if args.dir is None:
+    new_pwd: str | None = None
+    if nth is None:
         try:
             new_pwd = DIRSTACK.pop(0)
         except IndexError:
@@ -423,38 +431,35 @@ def popd(args, stdin=None):
             return None, e, 1
     else:
         try:
-            num = int(args.dir[1:])
+            num = int(nth[1:])
         except ValueError:
             e = "Invalid argument to popd: {0}\n"
-            return None, e.format(args.dir), 1
+            return None, e.format(nth), 1
 
         if num < 0:
             e = "Invalid argument to popd: {0}\n"
-            return None, e.format(args.dir), 1
+            return None, e.format(nth), 1
 
         if num > len(DIRSTACK):
             e = "Too few elements in dirstack ({0} elements)\n"
             return None, e.format(len(DIRSTACK)), 1
-        elif args.dir.startswith(FORWARD):
+        elif nth.startswith(FORWARD):
             if num == len(DIRSTACK):
                 new_pwd = DIRSTACK.pop(0)
             else:
-                new_pwd = None
                 DIRSTACK.pop(len(DIRSTACK) - 1 - num)
-        elif args.dir.startswith(BACKWARD):
+        elif nth.startswith(BACKWARD):
             if num == 0:
                 new_pwd = DIRSTACK.pop(0)
             else:
-                new_pwd = None
                 DIRSTACK.pop(num - 1)
         else:
             e = "Invalid argument to popd: {0}\n"
-            return None, e.format(args.dir), 1
+            return None, e.format(nth), 1
 
     if new_pwd is not None:
-        e = None
-        if args.cd:
-            env = builtins.__xonsh__.env
+        if cd:
+            env = XSH.env
             pwd = env["PWD"]
 
             _change_working_directory(new_pwd)
@@ -463,59 +468,43 @@ def popd(args, stdin=None):
                 drive, rem_path = os.path.splitdrive(pwd)
                 _unc_unmap_temp_drive(drive.casefold(), new_pwd)
 
-    if not args.quiet and not env.get("PUSHD_SILENT"):
+    if not quiet and not env.get("PUSHD_SILENT"):
         return dirs([], None)
 
     return None, None, 0
 
 
-@lazyobject
-def dirs_parser():
-    parser = argparse.ArgumentParser(prog="dirs")
-    parser.add_argument("N", nargs="?")
-    parser.add_argument(
-        "-c",
-        dest="clear",
-        help="Clears the directory stack by deleting all of" " the entries.",
-        action="store_true",
-    )
-    parser.add_argument(
-        "-p",
-        dest="print_long",
-        help="Print the directory stack with one entry per" " line.",
-        action="store_true",
-    )
-    parser.add_argument(
-        "-v",
-        dest="verbose",
-        help="Print the directory stack with one entry per"
-        " line, prefixing each entry with its index in the"
-        " stack.",
-        action="store_true",
-    )
-    parser.add_argument(
-        "-l",
-        dest="long",
-        help="Produces a longer listing; the default listing"
-        " format uses a tilde to denote the home directory.",
-        action="store_true",
-    )
-    return parser
+popd = ArgParserAlias(func=popd_fn, has_args=True, prog="popd")
 
 
-def dirs(args, stdin=None):
-    """xonsh command: dirs
+def dirs_fn(
+    nth: Annotated[str | None, Arg(metavar="N", nargs="?")] = None,
+    clear=False,
+    print_long=False,
+    verbose=False,
+    long=False,
+):
+    """Manage the list of currently remembered directories.
 
-    Displays the list of currently remembered directories.  Can also be used
-    to clear the directory stack.
+    Parameters
+    ----------
+    nth
+        Displays the Nth directory (counting from the left/right according to +/x prefix respectively),
+        starting with zero
+    clear : -c
+        Clears the directory stack by deleting all of the entries.
+    print_long : -p
+        Print the directory stack with one entry per line.
+    verbose : -v
+        Print the directory stack with one entry per line,
+        prefixing each entry with its index in the stack.
+    long : -l
+        Produces a longer listing; the default listing format
+        uses a tilde to denote the home directory.
     """
     global DIRSTACK
-    try:
-        args = dirs_parser.parse_args(args)
-    except SystemExit:
-        return None, None
 
-    env = builtins.__xonsh__.env
+    env = XSH.env
     dirstack = [os.path.expanduser(env["PWD"])] + DIRSTACK
 
     if env.get("PUSHD_MINUS"):
@@ -525,35 +514,34 @@ def dirs(args, stdin=None):
         BACKWARD = "-"
         FORWARD = "+"
 
-    if args.clear:
+    if clear:
         DIRSTACK = []
         return None, None, 0
 
-    if args.long:
+    if long:
         o = dirstack
     else:
         d = os.path.expanduser("~")
         o = [i.replace(d, "~") for i in dirstack]
 
-    if args.verbose:
+    if verbose:
         out = ""
         pad = len(str(len(o) - 1))
-        for (ix, e) in enumerate(o):
+        for ix, e in enumerate(o):
             blanks = " " * (pad - len(str(ix)))
-            out += "\n{0}{1} {2}".format(blanks, ix, e)
+            out += f"\n{blanks}{ix} {e}"
         out = out[1:]
-    elif args.print_long:
+    elif print_long:
         out = "\n".join(o)
     else:
         out = " ".join(o)
 
-    N = args.N
-    if N is not None:
+    if nth is not None:
         try:
-            num = int(N[1:])
+            num = int(nth[1:])
         except ValueError:
             e = "Invalid argument to dirs: {0}\n"
-            return None, e.format(N), 1
+            return None, e.format(nth), 1
 
         if num < 0:
             e = "Invalid argument to dirs: {0}\n"
@@ -563,14 +551,27 @@ def dirs(args, stdin=None):
             e = "Too few elements in dirstack ({0} elements)\n"
             return None, e.format(len(o)), 1
 
-        if N.startswith(BACKWARD):
+        if nth.startswith(BACKWARD):
             idx = num
-        elif N.startswith(FORWARD):
+        elif nth.startswith(FORWARD):
             idx = len(o) - 1 - num
         else:
             e = "Invalid argument to dirs: {0}\n"
-            return None, e.format(N), 1
+            return None, e.format(nth), 1
 
         out = o[idx]
 
     return out + "\n", None, 0
+
+
+dirs = ArgParserAlias(prog="dirs", func=dirs_fn, has_args=True)
+
+
+@contextlib.contextmanager
+def with_pushd(d):
+    """Use pushd as a context manager"""
+    pushd_fn(d)
+    try:
+        yield
+    finally:
+        popd_fn()

@@ -1,39 +1,47 @@
 """Tests pygments hooks."""
-import pytest
+
 import os
-import stat
 import pathlib
-
+import stat
 from tempfile import TemporaryDirectory
-from xonsh.platform import ON_WINDOWS
 
+import pytest
+
+from xonsh.environ import LsColors
+from xonsh.platform import ON_WINDOWS
 from xonsh.pyghooks import (
-    XonshStyle,
+    XSH,
     Color,
     Token,
-    color_name_to_pygments_code,
+    XonshLexer,
+    XonshStyle,
     code_by_name,
     color_file,
+    color_name_to_pygments_code,
     file_color_tokens,
     get_style_by_name,
     register_custom_pygments_style,
 )
 
-from xonsh.environ import LsColors
-
 
 @pytest.fixture
-def xonsh_builtins_LS_COLORS(xonsh_builtins):
+def xs_LS_COLORS(xession, os_env, monkeypatch):
     """Xonsh environment including LS_COLORS"""
-    e = xonsh_builtins.__xonsh__.env
+
+    # original env is needed on windows. since it will skip enhanced coloring
+    # for some emulators
+    monkeypatch.setattr(xession, "env", os_env)
+
     lsc = LsColors(LsColors.default_settings)
-    xonsh_builtins.__xonsh__.env["LS_COLORS"] = lsc
-    xonsh_builtins.__xonsh__.shell.shell_type = "prompt_toolkit"
-    xonsh_builtins.__xonsh__.shell.shell.styler = XonshStyle()  # default style
+    xession.env["LS_COLORS"] = lsc
 
-    yield xonsh_builtins
+    # todo: a separate test for this as True
+    xession.env["INTENSIFY_COLORS_ON_WIN"] = False
 
-    xonsh_builtins.__xonsh__.env = e
+    xession.shell.shell_type = "prompt_toolkit"
+    xession.shell.shell.styler = XonshStyle()  # default style
+
+    yield xession
 
 
 DEFAULT_STYLES = {
@@ -138,9 +146,7 @@ def test_code_by_name(name, exp):
         ),
     ],
 )
-def test_color_token_by_name(
-    in_tuple, exp_ct, exp_ansi_colors, xonsh_builtins_LS_COLORS
-):
+def test_color_token_by_name(in_tuple, exp_ct, exp_ansi_colors, xs_LS_COLORS):
     from xonsh.pyghooks import XonshStyle, color_token_by_name
 
     xs = XonshStyle()
@@ -151,13 +157,14 @@ def test_color_token_by_name(
     assert ansi_colors == exp_ansi_colors, "color token mapped to correct color string"
 
 
-def test_XonshStyle_init_file_color_tokens(xonsh_builtins_LS_COLORS):
+def test_XonshStyle_init_file_color_tokens(xs_LS_COLORS, monkeypatch):
+    keys = list(file_color_tokens)
+    for n in keys:
+        monkeypatch.delitem(file_color_tokens, n)
     xs = XonshStyle()
     assert xs.styles
-    assert type(file_color_tokens) is dict
-    assert set(file_color_tokens.keys()) == set(
-        xonsh_builtins_LS_COLORS.__xonsh__.env["LS_COLORS"].keys()
-    )
+    assert isinstance(file_color_tokens, dict)
+    assert set(file_color_tokens.keys()) == set(xs_LS_COLORS.env["LS_COLORS"].keys())
 
 
 # parameterized tests for file colorization
@@ -225,7 +232,6 @@ def colorizable_files():
 
     with TemporaryDirectory() as tempdir:
         for k, v in _cf.items():
-
             if v is None:
                 continue
             if v.startswith("/"):
@@ -283,9 +289,10 @@ def colorizable_files():
 
 
 @pytest.mark.parametrize(
-    "key,file_path", [(key, file_path) for key, file_path in _cf.items() if file_path],
+    "key,file_path",
+    [(key, file_path) for key, file_path in _cf.items() if file_path],
 )
-def test_colorize_file(key, file_path, colorizable_files, xonsh_builtins_LS_COLORS):
+def test_colorize_file(key, file_path, colorizable_files, xs_LS_COLORS):
     """test proper file codes with symlinks colored normally"""
     ffp = colorizable_files + "/" + file_path
     stat_result = os.lstat(ffp)
@@ -295,13 +302,12 @@ def test_colorize_file(key, file_path, colorizable_files, xonsh_builtins_LS_COLO
 
 
 @pytest.mark.parametrize(
-    "key,file_path", [(key, file_path) for key, file_path in _cf.items() if file_path],
+    "key,file_path",
+    [(key, file_path) for key, file_path in _cf.items() if file_path],
 )
-def test_colorize_file_symlink(
-    key, file_path, colorizable_files, xonsh_builtins_LS_COLORS
-):
+def test_colorize_file_symlink(key, file_path, colorizable_files, xs_LS_COLORS):
     """test proper file codes with symlinks colored target."""
-    xonsh_builtins_LS_COLORS.__xonsh__.env["LS_COLORS"]["ln"] = "target"
+    xs_LS_COLORS.env["LS_COLORS"]["ln"] = "target"
     ffp = colorizable_files + "/" + file_path + "_symlink"
     stat_result = os.lstat(ffp)
     assert stat.S_ISLNK(stat_result.st_mode)
@@ -322,10 +328,10 @@ def test_colorize_file_symlink(
     assert color_key == tar_color_key, "File classified as expected kind, via symlink"
 
 
-import xonsh.lazyimps
+import xonsh.lib.lazyimps
 
 
-def test_colorize_file_ca(xonsh_builtins_LS_COLORS, monkeypatch):
+def test_colorize_file_ca(xs_LS_COLORS, monkeypatch):
     def mock_os_listxattr(*args, **kwards):
         return ["security.capability"]
 
@@ -366,6 +372,11 @@ def test_colorize_file_ca(xonsh_builtins_LS_COLORS, monkeypatch):
             {"completion-menu.completion.current": "#00ff00"},
             {Token.PTK.CompletionMenu.Completion.Current: "#00ff00"},
         ),  # ptk style
+        (
+            "test6",
+            {"RED": "#ff0000"},
+            {Token.Color.RED: "#ff0000"},
+        ),  # short color name
     ],
 )
 def test_register_custom_pygments_style(name, styles, refrules):
@@ -379,3 +390,15 @@ def test_register_custom_pygments_style(name, styles, refrules):
     for rule, color in refrules.items():
         assert rule in style.styles
         assert style.styles[rule] == color
+
+
+def test_can_use_xonsh_lexer_without_xession(xession, monkeypatch):
+    # When Xonsh is used as a library and simply for its lexer plugin, the
+    # xession's env can be unset, so test that it can yield tokens without
+    # that env being set.
+    monkeypatch.setattr(xession, "env", None)
+
+    assert XSH.env is None
+    lexer = XonshLexer()
+    assert XSH.env is not None
+    list(lexer.get_tokens_unprocessed("  some text"))

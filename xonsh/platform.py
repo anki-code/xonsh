@@ -2,19 +2,19 @@
 compatibility layers to make use of the 'best' implementation available
 on a platform.
 """
-import os
-import sys
-import ctypes  # noqa
-import signal
-import pathlib
-import builtins
-import platform
-import functools
-import subprocess
-import collections.abc as cabc
-import importlib.util
 
-from xonsh.lazyasd import LazyBool, lazyobject, lazybool
+import collections.abc as cabc
+import ctypes  # noqa
+import functools
+import importlib.util
+import os
+import pathlib
+import platform
+import signal
+import subprocess
+import sys
+
+from xonsh.lib.lazyasd import LazyBool, lazybool, lazyobject
 
 # do not import any xonsh-modules here to avoid circular dependencies
 
@@ -88,7 +88,17 @@ def ON_BEOS():
 @lazybool
 def ON_WSL():
     """True if we are on Windows Subsystem for Linux (WSL)"""
-    return "Microsoft" in platform.release()
+    return "microsoft" in platform.release()
+
+
+@lazybool
+def ON_WSL1():
+    return bool(ON_WSL) and not bool(ON_WSL2)
+
+
+@lazybool
+def ON_WSL2():
+    return bool(ON_WSL) and "WSL2" in platform.release()
 
 
 #
@@ -140,7 +150,7 @@ def pygments_version():
 
 @functools.lru_cache(1)
 def pygments_version_info():
-    """ Returns `pygments`'s version as tuple of integers. """
+    """Returns `pygments`'s version as tuple of integers."""
     if HAS_PYGMENTS:
         return tuple(int(x) for x in pygments_version().strip("<>+-=.").split("."))
     else:
@@ -167,7 +177,7 @@ def ptk_version():
 
 @functools.lru_cache(1)
 def ptk_version_info():
-    """ Returns `prompt_toolkit`'s version as tuple of integers. """
+    """Returns `prompt_toolkit`'s version as tuple of integers."""
     if has_prompt_toolkit():
         return tuple(int(x) for x in ptk_version().strip("<>+-=.").split("."))
     else:
@@ -187,7 +197,7 @@ def ptk_above_min_supported():
 def win_ansi_support():
     if ON_WINDOWS:
         try:
-            from prompt_toolkit.utils import is_windows_vt100_supported, is_conemu_ansi
+            from prompt_toolkit.utils import is_conemu_ansi, is_windows_vt100_supported
         except ImportError:
             return False
         return is_conemu_ansi() or is_windows_vt100_supported()
@@ -203,7 +213,9 @@ def ptk_below_max_supported():
 
 @functools.lru_cache(1)
 def best_shell_type():
-    if builtins.__xonsh__.env.get("TERM", "") == "dumb":
+    from xonsh.built_ins import XSH
+
+    if XSH.env.get("TERM", "") == "dumb":
         return "dumb"
     if has_prompt_toolkit():
         return "prompt_toolkit"
@@ -231,6 +243,9 @@ def pathsplit(p):
     without a drive.
     """
     n = len(p)
+    if n == 0:
+        # lazy object seps does not get initialized when n is zero
+        return "", ""
     while n and p[n - 1] not in seps:
         n -= 1
     pre = p[:n]
@@ -289,7 +304,7 @@ CC = 6
 def githash():
     """Returns a tuple contains two strings: the hash and the date."""
     install_base = os.path.dirname(__file__)
-    githash_file = "{}/dev.githash".format(install_base)
+    githash_file = f"{install_base}/dev.githash"
     if not os.path.exists(githash_file):
         return None, None
     sha = None
@@ -357,15 +372,17 @@ def windows_bash_command():
     """Determines the command for Bash on windows."""
     # Check that bash is on path otherwise try the default directory
     # used by Git for windows
+    from xonsh.built_ins import XSH
+
     wbc = "bash"
-    cmd_cache = builtins.__xonsh__.commands_cache
+    cmd_cache = XSH.commands_cache
     bash_on_path = cmd_cache.lazy_locate_binary("bash", ignore_alias=True)
     if bash_on_path:
         try:
             out = subprocess.check_output(
                 [bash_on_path, "--version"],
                 stderr=subprocess.PIPE,
-                universal_newlines=True,
+                text=True,
             )
         except subprocess.CalledProcessError:
             bash_works = False
@@ -401,7 +418,7 @@ if ON_WINDOWS:
         def __init__(self):
             import nt
 
-            self._upperkeys = dict((k.upper(), k) for k in nt.environ)
+            self._upperkeys = {k.upper(): k for k in nt.environ}
 
         def _sync(self):
             """Ensure that the case sensitive map of the keys are
@@ -458,10 +475,11 @@ def os_environ():
         return os.environ
 
 
-@functools.lru_cache(1)
 def bash_command():
     """Determines the command for Bash on the current platform."""
-    if ON_WINDOWS:
+    if (bc := os.getenv("XONSH_BASH_PATH_OVERRIDE", None)) is not None:
+        bc = str(bc)  # for pathlib Paths
+    elif ON_WINDOWS:
         bc = windows_bash_command()
     else:
         bc = "bash"
@@ -478,8 +496,10 @@ def BASH_COMPLETIONS_DEFAULT():
     elif ON_DARWIN:
         bcd = (
             "/usr/local/share/bash-completion/bash_completion",  # v2.x
-            "/usr/local/etc/bash_completion",
-        )  # v1.x
+            "/usr/local/etc/bash_completion",  # v1.x
+            "/opt/homebrew/share/bash-completion/bash_completion",  # v2.x on M1
+            "/opt/homebrew/etc/bash_completion",  # v1.x on M1
+        )
     elif ON_WINDOWS and git_for_windows_path():
         bcd = (
             os.path.join(
@@ -487,7 +507,7 @@ def BASH_COMPLETIONS_DEFAULT():
             ),
             os.path.join(
                 git_for_windows_path(),
-                "mingw64\\share\\git\\completion\\" "git-completion.bash",
+                "mingw64\\share\\git\\completion\\git-completion.bash",
             ),
         )
     else:

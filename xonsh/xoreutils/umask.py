@@ -1,9 +1,9 @@
 """Implements a umask command for xonsh."""
 
-import re
 import os
+import re
 
-import xonsh.lazyasd as xl
+import xonsh.lib.lazyasd as xl
 
 
 @xl.lazyobject
@@ -68,8 +68,7 @@ def get_symbolic_rep_single(digit):
 def get_symbolic_rep(number):
     digits = get_oct_digits(number)
     return ",".join(
-        "{}={}".format(class_, get_symbolic_rep_single(digits[class_]))
-        for class_ in "ugo"
+        f"{class_}={get_symbolic_rep_single(digits[class_])}" for class_ in "ugo"
     )
 
 
@@ -92,7 +91,7 @@ def single_symbolic_arg(arg, old=None):
 
     match = symbolic_matcher.match(arg)
     if not match:
-        raise ValueError("could not parse argument %r" % arg)
+        raise ValueError(f"could not parse argument {arg!r}")
 
     class_, op, mask = match.groups()
 
@@ -101,7 +100,7 @@ def single_symbolic_arg(arg, old=None):
 
     invalid_chars = [i for i in mask if i not in name_to_value]
     if invalid_chars:
-        raise ValueError("invalid mask %r" % mask)
+        raise ValueError(f"invalid mask {mask!r}")
 
     digits = get_oct_digits(old)
     new_num = get_numeric_rep_single(mask)
@@ -135,7 +134,7 @@ def umask(args, stdin, stdout, stderr):
         else:
             to_print = oct(cur)[2:]
             while len(to_print) < 3:
-                to_print = "0%s" % to_print
+                to_print = f"0{to_print}"
         print(to_print, file=stdout)
         return 0
     else:
@@ -147,7 +146,7 @@ def umask(args, stdin, stdout, stderr):
             if len(num) != 1:
                 print("error: can't have more than one numeric argument", file=stderr)
                 return 1
-        for arg, isnum in zip(args, num):
+        for arg, isnum in zip(args, num, strict=False):
             if isnum:
                 cur = int(arg, 8)
             else:
@@ -159,7 +158,7 @@ def umask(args, stdin, stdout, stderr):
                         cur = single_symbolic_arg(subarg, cur)
                     except:
                         print(
-                            "error: could not parse argument: %r" % subarg, file=stderr
+                            f"error: could not parse argument: {subarg!r}", file=stderr
                         )
                         return 1
                 cur = invert(cur)

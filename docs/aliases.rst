@@ -70,7 +70,7 @@ independent of the setting of the $AUTO_CONTINUE option.
 ``EOF``, ``exit``, and ``quit``
 ===================================
 The commands ``EOF``, ``exit``, and ``quit`` all alias the same action, which is to
-leave xonsh in a safe manner. Typing ``Crtl-d`` is the same as typing ``EOF`` and
+leave xonsh in a safe manner. Typing ``Ctrl-d`` is the same as typing ``EOF`` and
 pressing enter.
 
 
@@ -83,7 +83,8 @@ pressing enter.
 ``source``
 ====================
 Executes the contents of the provided files in the current context. This, of course,
-only works on xonsh and Python files.
+only works on xonsh and Python files (``*.xsh``, ``*.py``). Use ``-e`` to ignore
+extension.
 
 
 ``source-bash``
@@ -91,6 +92,13 @@ only works on xonsh and Python files.
 Like the ``source`` command but for Bash files. This is a thin wrapper around
 the ``source-foreign`` alias where the ``shell`` argument is automatically set
 to ``bash``.
+
+
+``source-zsh``
+==============
+Like the ``source`` command but for ZSH files. This is a thin wrapper around
+the ``source-foreign`` alias where the ``shell`` argument is automatically set
+to ``zsh``.
 
 
 ``source-foreign``
@@ -114,19 +122,18 @@ for more information all the history command and all of its sub-commands.
 Runs timing study on arguments. Similar to IPython's ``%timeit`` magic.
 
 
-``scp-resume``
-=================
-Simple alias defined as ``['rsync', '--partial', '-h', '--progress', '--rsh=ssh']``.
-
 ``showcmd``
 ============
-Displays how commands and arguments are evaluated.
+Displays how commands and arguments are evaluated. Use ``-e`` to expand aliases.
 
+.. code-block:: console
 
-``ipynb``
-=================
-Simple alias defined as ``['ipython', 'notebook', '--no-browser']``.
-
+    @ showcmd echo The @('args') @(['list', 'is']) $(echo here) "and" --say="hello" to @([]) you
+    ['echo', 'The', 'args', 'list', 'is', 'here', 'and', '--say="hello"', 'to', 'you']
+    @ showcmd ls
+    ls
+    @ showcmd -e ls
+    ['ls', '--group-directories-first', '-A', '--color']
 
 ``trace``
 =================
@@ -135,21 +142,91 @@ Provides an interface to printing lines of source code prior to their execution.
 .. command-help:: xonsh.tracer.tracermain
 
 
-``xpip``
-=================
-Runs the ``pip`` package manager for xonsh itself. Useful for installations where xonsh is in an
-isolated environment (eg conda, homebrew).
-
-In general, use ``xpip`` if you're configuring or adding features to xonsh, and use ``pip`` if
-you're doing Python development.
-
-
 ``xonfig``
 =================
 Manages xonsh configuration information.
 
 .. command-help:: xonsh.xonfig.xonfig_main
 
+
+``xcontext``
+=================
+
+.. code-block:: console
+
+    @ xcontext
+    [Current xonsh session]
+    xpython: /home/snail/.local/xonsh-env/bin/python # Python 3.12.10
+    xpip: /home/snail/.local/xonsh-env/bin/python -m pip
+
+    [Current commands environment]
+    xonsh: /home/snail/.local/xonsh-env/bin/xonsh
+    python: /usr/bin/python # Python 3.11.6
+    pip: /usr/bin/pip
+
+    CONDA_DEFAULT_ENV: my-env
+
+Report information about the current xonsh environment, including paths to the Python interpreter, pip, xonsh itself, and relevant environment variables.
+
+
+``xontrib``
+==============
+Manages xonsh extensions. More information is available at :doc:`tutorial_xontrib`
+
+
+``xpip``
+=================
+Runs the ``pip`` package manager for xonsh itself. Useful for installations where xonsh is in an
+isolated environment (e.g. conda, mamba, homebrew).
+
+.. code-block:: console
+
+    @ which pip 
+    /usr/bin/pip  # system pip
+    @ which xpip
+    /home/snail/.local/xonsh-env/bin/python -m pip  # current xonsh session pip
+    @ xpip install fire
+    @ import fire
+    @ fire
+    <module 'fire' from '/home/snail/.local/xonsh-env/lib/python3.11/site-packages/fire/__init__.py'>
+
+
+``xpython``
+=================
+
+Alias to the Python interpreter that is currently running xonsh (``sys.executable``). This is useful for running Python modules or scripts in the same environment as the shell itself, especially in complex setups like AppImage.
+
+.. code-block:: console
+
+    @ python -V
+    Python 3.12.10
+    @ xpython -V
+    Python 3.11.9
+    @ which python
+    /opt/homebrew/bin/python
+    @ which xpython
+    /home/snail/.local/xonsh-env/bin/python
+
+
+``xreset``
+=================
+Clean the xonsh context. All user variables will be deleted.
+
+.. code-block:: console
+    @ a=1
+    @ a
+    1
+    @ xreset
+    @ a
+    Not found
+
+``@thread`` and ``@unthread``
+=============================
+Use ``@thread`` and ``@unthread`` to run command as threadable or unthreadable e.g to have a result of ssh command:
+
+.. code-block:: console
+
+    @ !(@thread ssh host -T "echo 1")
 
 Windows cmd Aliases
 =======================
@@ -203,7 +280,3 @@ it is instead aliased to ``['ls', '-G']``.
 ====================
 The ``grep`` command is aliased to ``['grep', '--color=auto']``.
 
-
-``xontrib``
-==============
-Manages xonsh extensions.

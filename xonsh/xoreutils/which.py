@@ -1,16 +1,17 @@
 """Implements the which xoreutil."""
-import os
+
 import argparse
-import builtins
 import functools
+import os
 
 import xonsh
-from xonsh.xoreutils import _which
 import xonsh.platform as xp
 import xonsh.procs.pipelines as xpp
+from xonsh.built_ins import XSH
+from xonsh.xoreutils import _which
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def _which_create_parser():
     desc = "Parses arguments to which wrapper"
     parser = argparse.ArgumentParser("which", description=desc)
@@ -28,7 +29,7 @@ def _which_create_parser():
         "-s",
         "--skip-alias",
         action="store_true",
-        help="Do not search inxonsh.aliases",
+        help="Do not search in xonsh.aliases",
         dest="skip",
     )
     parser.add_argument(
@@ -36,14 +37,14 @@ def _which_create_parser():
         "--version",
         action="version",
         version=f"{_which.__version__}",
-        help="Display the version of the python which module " "used by xonsh",
+        help="Display the version of the python which module used by xonsh",
     )
     parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
         dest="verbose",
-        help="Print out how matches were located and show " "near misses on stderr",
+        help="Print out how matches were located and show near misses on stderr",
     )
     parser.add_argument(
         "-p",
@@ -76,8 +77,8 @@ def _which_create_parser():
 
 def print_global_object(arg, stdout):
     """Print the object."""
-    obj = builtins.__xonsh__.ctx.get(arg)
-    print("global object of {}".format(type(obj)), file=stdout)
+    obj = XSH.ctx.get(arg)
+    print(f"global object of {type(obj)}", file=stdout)
 
 
 def print_path(abs_name, from_where, stdout, verbose=False, captured=False):
@@ -88,7 +89,7 @@ def print_path(abs_name, from_where, stdout, verbose=False, captured=False):
         p, f = os.path.split(abs_name)
         f = next(s.name for s in os.scandir(p) if s.name.lower() == f.lower())
         abs_name = os.path.join(p, f)
-        if builtins.__xonsh__.env.get("FORCE_POSIX_PATHS", False):
+        if XSH.env.get("FORCE_POSIX_PATHS", False):
             abs_name.replace(os.sep, os.altsep)
     if verbose:
         print(f"{abs_name} ({from_where})", file=stdout)
@@ -99,7 +100,7 @@ def print_path(abs_name, from_where, stdout, verbose=False, captured=False):
 
 def print_alias(arg, stdout, verbose=False):
     """Print the alias."""
-    alias = builtins.aliases[arg]
+    alias = XSH.aliases[arg]
     if not verbose:
         if not callable(alias):
             print(" ".join(alias), file=stdout)
@@ -109,12 +110,12 @@ def print_alias(arg, stdout, verbose=False):
             print(alias, file=stdout)
     else:
         print(
-            "aliases['{}'] = {}".format(arg, alias),
+            f"aliases['{arg}'] = {alias}",
             flush=True,
             file=stdout,
         )
         if callable(alias) and not isinstance(alias, xonsh.aliases.ExecAlias):
-            builtins.__xonsh__.superhelp(alias)
+            XSH.superhelp(alias)
 
 
 def which(args, stdin=None, stdout=None, stderr=None, spec=None):
@@ -141,16 +142,16 @@ def which(args, stdin=None, stdout=None, stderr=None, spec=None):
         if pargs.exts:
             exts = pargs.exts
         else:
-            exts = builtins.__xonsh__.env["PATHEXT"]
+            exts = XSH.env["PATHEXT"]
     else:
         exts = None
     failures = []
     for arg in pargs.args:
         nmatches = 0
-        if pargs.all and arg in builtins.__xonsh__.ctx:
+        if pargs.all and arg in XSH.ctx:
             print_global_object(arg, stdout)
             nmatches += 1
-        if arg in builtins.aliases and not pargs.skip:
+        if arg in XSH.aliases and not pargs.skip:
             print_alias(arg, stdout, verbose)
             nmatches += 1
             if not pargs.all:
@@ -159,13 +160,17 @@ def which(args, stdin=None, stdout=None, stderr=None, spec=None):
         # from os.environ so we temporarily override it with
         # __xosnh_env__['PATH']
         original_os_path = xp.os_environ["PATH"]
-        xp.os_environ["PATH"] = builtins.__xonsh__.env.detype()["PATH"]
+        xp.os_environ["PATH"] = XSH.env.detype()["PATH"]
         matches = _which.whichgen(arg, exts=exts, verbose=verbose)
-        for abs_name, from_where in matches:
-            print_path(abs_name, from_where, stdout, verbose, captured)
-            nmatches += 1
-            if not pargs.all:
-                break
+        if matches is not None:
+            for match in matches:
+                if match is None:
+                    continue
+                abs_name, from_where = match
+                print_path(abs_name, from_where, stdout, verbose, captured)
+                nmatches += 1
+                if not pargs.all:
+                    break
         xp.os_environ["PATH"] = original_os_path
         if not nmatches:
             failures.append(arg)
@@ -177,7 +182,7 @@ def which(args, stdin=None, stdout=None, stderr=None, spec=None):
             print("globals or ", file=stderr, end="")
         print("$PATH", file=stderr, end="")
         if not pargs.skip:
-            print(" or xonsh.builtins.aliases", file=stderr, end="")
+            print(" or aliases", file=stderr, end="")
         print("", file=stderr, end="\n")
         return len(failures)
 

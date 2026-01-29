@@ -1,31 +1,30 @@
-# -*- coding: utf-8 -*-
 """Testing xonsh import hooks"""
+
 import os
-import builtins
 from importlib import import_module
 
 import pytest
 
 from xonsh import imphooks
-from xonsh.execer import Execer
-from xonsh.environ import Env
-from xonsh.built_ins import unload_builtins
-
-imphooks.install_import_hooks()
 
 
 @pytest.fixture(autouse=True)
-def imp_env(xonsh_builtins):
-    Execer(unload=False)
-    builtins.__xonsh__.env = Env({"PATH": [], "PATHEXT": []})
+def imp_env(xession):
+    xession.env.update({"PATH": [], "PATHEXT": []})
+    imphooks.install_import_hooks(xession.execer)
     yield
-    unload_builtins()
 
 
 def test_import():
     import sample
 
     assert "hello mom jawaka\n" == sample.x
+
+
+def test_import_empty():
+    from xpack import empty_xsh
+
+    assert empty_xsh
 
 
 def test_absolute_import():
@@ -68,5 +67,5 @@ def test_get_source():
     mod = import_module("sample")
     loader = mod.__loader__
     source = loader.get_source("sample")
-    with open(os.path.join(TEST_DIR, "sample.xsh"), "rt") as srcfile:
+    with open(os.path.join(TEST_DIR, "sample.xsh")) as srcfile:
         assert source == srcfile.read()

@@ -13,14 +13,19 @@ The cache file is created on first use, if it does not already exist.
 
 
 """
-import os
+
 import importlib
+import os
+import typing as tp
+
+if tp.TYPE_CHECKING:
+    from pygments.style import Style
 
 
 # Global storage variables
 __version__ = "0.1.1"
-CACHE = None
-CUSTOM_STYLES = {}
+CACHE: "dict[str, tp.Any] | None" = None
+CUSTOM_STYLES: "dict[str, Style]" = {}
 DEBUG = False
 
 
@@ -28,7 +33,7 @@ def _print_duplicate_message(duplicates):
     import sys
 
     for filename, vals in sorted(duplicates.items()):
-        msg = "for {0} ambiquity between:\n  ".format(filename)
+        msg = f"for {filename} ambiquity between:\n  "
         vals = [m + ":" + c for m, c in vals]
         msg += "\n  ".join(sorted(vals))
         print(msg, file=sys.stderr)
@@ -36,7 +41,8 @@ def _print_duplicate_message(duplicates):
 
 def _discover_lexers():
     import inspect
-    from pygments.lexers import get_all_lexers, find_lexer_class
+
+    from pygments.lexers import find_lexer_class, get_all_lexers
 
     # maps file extension (and names) to (module, classname) tuples
     default_exts = {
@@ -104,7 +110,7 @@ def _discover_lexers():
         from collections import defaultdict
 
         duplicates = defaultdict(set)
-    for longname, aliases, filenames, mimetypes in get_all_lexers():
+    for longname, _, filenames, _ in get_all_lexers():
         cls = find_lexer_class(longname)
         mod = inspect.getmodule(cls)
         val = (mod.__name__, cls.__name__)
@@ -132,6 +138,7 @@ def _discover_lexers():
 
 def _discover_formatters():
     import inspect
+
     from pygments.formatters import get_all_formatters
 
     # maps file extension (and names) to (module, classname) tuples
@@ -186,6 +193,7 @@ def _discover_formatters():
 
 def _discover_styles():
     import inspect
+
     from pygments.styles import get_all_styles, get_style_by_name
 
     # maps style 'name' (not the class name) and aliases to (module, classname) tuples
@@ -214,6 +222,7 @@ def _discover_styles():
 
 def _discover_filters():
     import inspect
+
     from pygments.filters import get_all_filters, get_filter_by_name
 
     # maps filter 'name' (not the class name) to (module, classname) tuples
@@ -267,14 +276,14 @@ def cache_filename():
         )
 
 
-def add_custom_style(name, style):
+def add_custom_style(name: str, style: "Style"):
     """Register custom style to be able to retrieve it by ``get_style_by_name``.
 
     Parameters
     ----------
-    name : str
+    name
         Style name.
-    style : pygments.Style
+    style
         Custom style to add.
     """
     CUSTOM_STYLES[name] = style
@@ -297,7 +306,7 @@ def write_cache(filename):
     d = os.path.dirname(filename)
     os.makedirs(d, exist_ok=True)
     s = pformat(CACHE)
-    with open(filename, "w") as f:
+    with open(filename, "w", encoding="utf-8") as f:
         f.write(s)
 
 
@@ -343,6 +352,7 @@ def get_lexer_for_filename(filename, text="", **options):
     else:
         # couldn't find lexer in cache, fallback to the hard way
         import inspect
+
         from pygments.lexers import guess_lexer_for_filename
 
         lexer = guess_lexer_for_filename(filename, text, **options)
@@ -375,6 +385,7 @@ def get_formatter_for_filename(fn, **options):
     else:
         # couldn't find formatter in cache, fallback to the hard way
         import inspect
+
         from pygments.formatters import get_formatter_for_filename
 
         formatter = get_formatter_for_filename(fn, **options)
@@ -401,6 +412,7 @@ def get_formatter_by_name(alias, **options):
     else:
         # couldn't find formatter in cache, fallback to the hard way
         import inspect
+
         from pygments.formatters import get_formatter_by_name
 
         formatter = get_formatter_by_name(alias, **options)
@@ -428,6 +440,7 @@ def get_style_by_name(name):
     else:
         # couldn't find style in cache, fallback to the hard way
         import inspect
+
         from pygments.styles import get_style_by_name
 
         style = get_style_by_name(name)
@@ -463,6 +476,7 @@ def get_filter_by_name(filtername, **options):
     else:
         # couldn't find style in cache, fallback to the hard way
         import inspect
+
         from pygments.filters import get_filter_by_name
 
         filter = get_filter_by_name(filtername, **options)

@@ -1,58 +1,57 @@
 """The xonsh configuration (xonfig) utility."""
-import os
-import re
-import ast
-import sys
-import json
-import shutil
-import random
-import pprint
-import tempfile
-import textwrap
-import builtins
-import argparse
-import functools
-import itertools
-import contextlib
-import collections
-import typing as tp
 
-from xonsh.ply import ply
+import ast
+import collections
+import contextlib
+import itertools
+import json
+import os
+import pprint
+import random
+import re
+import shutil
+import textwrap
+import typing as tp
 
 import xonsh.wizard as wiz
 from xonsh import __version__ as XONSH_VERSION
-from xonsh.prompt.base import is_template_string
-from xonsh.platform import (
-    is_readline_available,
-    ptk_version,
-    PYTHON_VERSION_INFO,
-    pygments_version,
-    ON_POSIX,
-    ON_LINUX,
-    linux_distro,
-    ON_DARWIN,
-    ON_WINDOWS,
-    ON_CYGWIN,
-    DEFAULT_ENCODING,
-    ON_MSYS,
-    githash,
-)
-from xonsh.tools import (
-    to_bool,
-    is_string,
-    print_exception,
-    is_superuser,
-    color_style_names,
-    print_color,
-    color_style,
-)
+from xonsh.built_ins import XSH
+from xonsh.cli_utils import Arg, ArgParserAlias
+from xonsh.events import events
 from xonsh.foreign_shells import CANON_SHELL_NAMES
-from xonsh.xontribs import find_xontrib, xontribs_loaded
-from xonsh.xontribs_meta import get_xontribs, Xontrib
-from xonsh.lazyasd import lazyobject
+from xonsh.lib.lazyasd import lazyobject
+from xonsh.parsers import ply
+from xonsh.platform import (
+    DEFAULT_ENCODING,
+    ON_CYGWIN,
+    ON_DARWIN,
+    ON_LINUX,
+    ON_MSYS,
+    ON_POSIX,
+    ON_WINDOWS,
+    ON_WSL,
+    ON_WSL1,
+    PYTHON_VERSION_INFO,
+    githash,
+    is_readline_available,
+    linux_distro,
+    ptk_version,
+    pygments_version,
+)
+from xonsh.prompt.base import is_template_string
+from xonsh.tools import (
+    color_style,
+    color_style_names,
+    is_string,
+    is_superuser,
+    print_color,
+    print_exception,
+    to_bool,
+)
+from xonsh.xontribs import Xontrib, find_xontrib, get_xontribs, xontribs_loaded
 
 HR = "'`-.,_,.-*'`-.,_,.-*'`-.,_,.-*'`-.,_,.-*'`-.,_,.-*'`-.,_,.-*'`-.,_,.-*'"
-WIZARD_HEAD = """
+WIZARD_HEAD = f"""
           {{BOLD_WHITE}}Welcome to the xonsh configuration wizard!{{RESET}}
           {{YELLOW}}------------------------------------------{{RESET}}
 This will present a guided tour through setting up the xonsh static
@@ -71,13 +70,11 @@ variable setup. Each phase may be skipped in its entirety.
 
 For the configuration to take effect, you will need to restart xonsh.
 
-{hr}
-""".format(
-    hr=HR
-)
+{HR}
+"""
 
-WIZARD_FS = """
-{hr}
+WIZARD_FS = f"""
+{HR}
 
                       {{BOLD_WHITE}}Foreign Shell Setup{{RESET}}
                       {{YELLOW}}-------------------{{RESET}}
@@ -89,12 +86,10 @@ aliases, and functions specified in the config files of these shells.
 Naturally, these shells must be available on the system to work.
 Being able to share configuration (and source) from foreign shells
 makes it easier to transition to and from xonsh.
-""".format(
-    hr=HR
-)
+"""
 
-WIZARD_ENV = """
-{hr}
+WIZARD_ENV = f"""
+{HR}
 
                   {{BOLD_WHITE}}Environment Variable Setup{{RESET}}
                   {{YELLOW}}--------------------------{{RESET}}
@@ -110,14 +105,12 @@ values are presented as pretty repr strings of their Python types.
 
 {{BOLD_GREEN}}Note:{{RESET}} Simply hitting enter for any environment variable
 will accept the default value for that entry.
-""".format(
-    hr=HR
-)
+"""
 
 WIZARD_ENV_QUESTION = "Would you like to set env vars now, " + wiz.YN
 
-WIZARD_XONTRIB = """
-{hr}
+WIZARD_XONTRIB = f"""
+{HR}
 
                            {{BOLD_WHITE}}Xontribs{{RESET}}
                            {{YELLOW}}--------{{RESET}}
@@ -130,9 +123,7 @@ This allows the xontrib to be used immediately in your xonshrc files.
 
 The following describes all xontribs that have been registered with xonsh.
 These come from users, 3rd party developers, or xonsh itself!
-""".format(
-    hr=HR
-)
+"""
 
 WIZARD_XONTRIB_QUESTION = "Would you like to enable xontribs now, " + wiz.YN
 
@@ -140,11 +131,19 @@ WIZARD_TAIL = """
 Thanks for using the xonsh configuration wizard!"""
 
 
-_XONFIG_SOURCE_FOREIGN_SHELL_COMMAND: tp.Dict[str, str] = collections.defaultdict(
+_XONFIG_SOURCE_FOREIGN_SHELL_COMMAND: dict[str, str] = collections.defaultdict(
     lambda: "source-foreign", bash="source-bash", cmd="source-cmd", zsh="source-zsh"
 )
 
-XONSH_JUPYTER_KERNEL = "xonsh"
+
+events.doc(
+    "on_xonfig_info_requested",
+    """
+on_xonfig_info_requested() -> list[tuple[str, str]]
+
+Register a callable that will return extra info when ``xonfig info`` is called.
+""",
+)
 
 
 def _dump_xonfig_foreign_shell(path, value):
@@ -189,14 +188,14 @@ def _dump_xonfig_foreign_shell(path, value):
 
 def _dump_xonfig_env(path, value):
     name = os.path.basename(path.rstrip("/"))
-    detyper = builtins.__xonsh__.env.get_detyper(name)
+    detyper = XSH.env.get_detyper(name)
     dval = str(value) if detyper is None else detyper(value)
     dval = str(value) if dval is None else dval
-    return "${name} = {val!r}".format(name=name, val=dval)
+    return f"${name} = {dval!r}"
 
 
 def _dump_xonfig_xontribs(path, value):
-    return "xontrib load {0}".format(" ".join(value))
+    return "xontrib load {}".format(" ".join(value))
 
 
 @lazyobject
@@ -239,7 +238,7 @@ def make_fs_wiz():
                 path="/foreign_shells/{idx}/aliascmd",
             ),
             wiz.StoreNonEmpty(
-                ("extra command line arguments [list of str, " "default=[]]: "),
+                ("extra command line arguments [list of str, default=[]]: "),
                 converter=ast.literal_eval,
                 show_conversion=True,
                 path="/foreign_shells/{idx}/extra_args",
@@ -289,7 +288,7 @@ ENVVAR_PROMPT = "{BOLD_GREEN}>>>{RESET} "
 
 def make_exit_message():
     """Creates a message for how to exit the wizard."""
-    shell_type = builtins.__xonsh__.shell.shell_type
+    shell_type = XSH.shell.shell_type
     keyseq = "Ctrl-D" if shell_type == "readline" else "Ctrl-C"
     msg = "To exit the wizard at any time, press {BOLD_UNDERLINE_CYAN}"
     msg += keyseq + "{RESET}.\n"
@@ -299,7 +298,7 @@ def make_exit_message():
 
 def make_envvar(name):
     """Makes a StoreNonEmpty node for an environment variable."""
-    env = builtins.__xonsh__.env
+    env = XSH.env
     vd = env.get_docs(name)
     if not vd.is_configurable:
         return
@@ -345,7 +344,7 @@ def _make_flat_wiz(kidfunc, *args):
 
 def make_env_wiz():
     """Makes an environment variable wizard."""
-    w = _make_flat_wiz(make_envvar, sorted(builtins.__xonsh__.env.keys()))
+    w = _make_flat_wiz(make_envvar, sorted(XSH.env.keys()))
     return w
 
 
@@ -357,24 +356,21 @@ def _xontrib_path(visitor=None, node=None, val=None):
     return ("xontribs", len(visitor.state.get("xontribs", ())))
 
 
-def make_xontrib(xon_item: tp.Tuple[str, Xontrib]):
+def make_xontrib(xon_item: tuple[str, Xontrib]):
     """Makes a message and StoreNonEmpty node for a xontrib."""
     name, xontrib = xon_item
     name = name or "<unknown-xontrib-name>"
     msg = "\n{BOLD_CYAN}" + name + "{RESET}\n"
+
     if xontrib.url:
         msg += "{RED}url:{RESET} " + xontrib.url + "\n"
-    if xontrib.package:
-        pkg = xontrib.package
-        msg += "{RED}package:{RESET} " + pkg.name + "\n"
-        if pkg.url:
-            if xontrib.url and pkg.url != xontrib.url:
-                msg += "{RED}package-url:{RESET} " + pkg.url + "\n"
-        if pkg.license:
-            msg += "{RED}license:{RESET} " + pkg.license + "\n"
+    if xontrib.distribution:
+        msg += "{RED}package:{RESET} " + xontrib.distribution.name + "\n"
+        if xontrib.license:
+            msg += "{RED}license:{RESET} " + xontrib.license + "\n"
     msg += "{PURPLE}installed?{RESET} "
     msg += ("no" if find_xontrib(name) is None else "yes") + "\n"
-    msg += _wrap_paragraphs(xontrib.description, width=69)
+    msg += _wrap_paragraphs(xontrib.get_description(), width=69)
     if msg.endswith("\n"):
         msg = msg[:-1]
     mnode = wiz.Message(message=msg)
@@ -443,15 +439,25 @@ def make_xonfig_wizard(default_file=None, confirm=False, no_wizard_file=None):
     return w
 
 
-def _wizard(ns):
-    env = builtins.__xonsh__.env
-    shell = builtins.__xonsh__.shell.shell
+def _wizard(
+    rcfile=None,
+    confirm=False,
+):
+    """Launch configurator in terminal
+
+    Parameters
+    -------
+    rcfile : -f, --file
+        config file location, default=$XONSHRC
+    confirm : -c, --confirm
+        confirm that the wizard should be run.
+    """
+    env = XSH.env
+    shell = XSH.shell.shell
     xonshrcs = env.get("XONSHRC", [])
-    fname = xonshrcs[-1] if xonshrcs and ns.file is None else ns.file
+    fname = xonshrcs[-1] if xonshrcs and rcfile is None else rcfile
     no_wiz = os.path.join(env.get("XONSH_CONFIG_DIR"), "no-wizard")
-    w = make_xonfig_wizard(
-        default_file=fname, confirm=ns.confirm, no_wizard_file=no_wiz
-    )
+    w = make_xonfig_wizard(default_file=fname, confirm=confirm, no_wizard_file=no_wiz)
     tempenv = {"PROMPT": "", "XONSH_STORE_STDOUT": False}
     pv = wiz.PromptVisitor(w, store_in_history=False, multiline=False)
 
@@ -488,7 +494,7 @@ def _xonfig_format_human(data):
         if isinstance(val, list) and val:
             for i, subval in enumerate(val):
                 s += row.format(
-                    key=f"{key} {i+1}", wcol1=wcol1, val=subval, wcol2=wcol2
+                    key=f"{key} {i + 1}", wcol1=wcol1, val=subval, wcol2=wcol2
                 )
         else:
             s += row.format(key=key, wcol1=wcol1, val=val, wcol2=wcol2)
@@ -502,9 +508,18 @@ def _xonfig_format_json(data):
     return s
 
 
-def _info(ns):
-    env = builtins.__xonsh__.env
-    data = [("xonsh", XONSH_VERSION)]
+def _info(
+    to_json=False,
+) -> str:
+    """Displays configuration information
+
+    Parameters
+    ----------
+    to_json : -j, --json
+        reports results as json
+    """
+    env = XSH.env
+    data: list[tp.Any] = [("xonsh", XONSH_VERSION)]
     hash_, date_ = githash()
     if hash_:
         data.append(("Git SHA", hash_))
@@ -516,6 +531,7 @@ def _info(ns):
             ("have readline", is_readline_available()),
             ("prompt toolkit", ptk_version() or None),
             ("shell type", env.get("SHELL_TYPE")),
+            ("history backend", env.get("XONSH_HISTORY_BACKEND")),
             ("pygments", pygments_version()),
             ("on posix", bool(ON_POSIX)),
             ("on linux", bool(ON_LINUX)),
@@ -523,6 +539,9 @@ def _info(ns):
     )
     if ON_LINUX:
         data.append(("distro", linux_distro()))
+        data.append(("on wsl", bool(ON_WSL)))
+        if ON_WSL:
+            data.append(("wsl version", 1 if ON_WSL1 else 2))
     data.extend(
         [
             ("on darwin", bool(ON_DARWIN)),
@@ -535,28 +554,45 @@ def _info(ns):
             ("encoding errors", env.get("XONSH_ENCODING_ERRORS")),
         ]
     )
-    jup_ksm = jup_kernel = None
-    try:
-        from jupyter_client.kernelspec import KernelSpecManager
-
-        jup_ksm = KernelSpecManager()
-        jup_kernel = jup_ksm.find_kernel_specs().get(XONSH_JUPYTER_KERNEL)
-    except Exception:
-        pass
-    data.extend([("on jupyter", jup_ksm is not None), ("jupyter kernel", jup_kernel)])
+    for p in XSH.builtins.events.on_xonfig_info_requested.fire():
+        if p is not None:
+            data.extend(p)
 
     data.extend([("xontrib", xontribs_loaded())])
+    data.extend([("RC file", XSH.rc_files)])
 
-    formatter = _xonfig_format_json if ns.json else _xonfig_format_human
+    # Show sensitive env variables that could affect the shell behavior.
+    envs = {
+        "UPDATE_OS_ENVIRON": None,
+        "XONSH_CAPTURE_ALWAYS": None,
+        "XONSH_SUBPROC_OUTPUT_FORMAT": None,
+        "THREAD_SUBPROCS": None,
+        "ENABLE_ASYNC_PROMPT": True,
+        "ENABLE_COMMANDS_CACHE": False,
+        "XONSH_CACHE_EVERYTHING": True,
+        "XONSH_CACHE_SCRIPTS": None,
+    }
+    for e, show_if in envs.items():
+        if (val := XSH.env.get(e)) is not None and (show_if is None or val == show_if):
+            data.extend([(e, val)])
+
+    formatter = _xonfig_format_json if to_json else _xonfig_format_human
     s = formatter(data)
     return s
 
 
-def _styles(ns):
-    env = builtins.__xonsh__.env
+def _styles(to_json=False, _stdout=None):
+    """Prints available xonsh color styles
+
+    Parameters
+    ----------
+    to_json: -j, --json
+        reports results as json
+    """
+    env = XSH.env
     curr = env.get("XONSH_COLOR_STYLE")
     styles = sorted(color_style_names())
-    if ns.json:
+    if to_json:
         s = json.dumps(styles, sort_keys=True, indent=1)
         print(s)
         return
@@ -567,7 +603,7 @@ def _styles(ns):
         else:
             lines.append("  " + style)
     s = "\n".join(lines)
-    print_color(s)
+    print_color(s, file=_stdout)
 
 
 def _str_colors(cmap, cols):
@@ -614,185 +650,93 @@ def _tok_colors(cmap, cols):
     return toks
 
 
-def _colors(args):
-    columns, _ = shutil.get_terminal_size()
-    columns -= int(ON_WINDOWS)
-    style_stash = builtins.__xonsh__.env["XONSH_COLOR_STYLE"]
+def xonfig_color_completer(*_, **__):
+    yield from color_style_names()
 
-    if args.style is not None:
-        if args.style not in color_style_names():
-            print("Invalid style: {}".format(args.style))
+
+def _colors(
+    style: tp.Annotated[str, Arg(nargs="?", completer=xonfig_color_completer)] = None,
+):
+    """Preview color style
+
+    Parameters
+    ----------
+    style
+        name of the style to preview. If not given, current style name is used.
+    """
+    columns, _ = shutil.get_terminal_size()
+    columns -= int(bool(ON_WINDOWS))
+    style_stash = XSH.env["XONSH_COLOR_STYLE"]
+
+    if style is not None:
+        if style not in color_style_names():
+            print(f"Invalid style: {style}")
             return
-        builtins.__xonsh__.env["XONSH_COLOR_STYLE"] = args.style
+        XSH.env["XONSH_COLOR_STYLE"] = style
 
     color_map = color_style()
+    if not color_map:
+        print("Empty color map - using non-interactive shell?")
+        return
     akey = next(iter(color_map))
     if isinstance(akey, str):
         s = _str_colors(color_map, columns)
     else:
         s = _tok_colors(color_map, columns)
     print_color(s)
-    builtins.__xonsh__.env["XONSH_COLOR_STYLE"] = style_stash
+    XSH.env["XONSH_COLOR_STYLE"] = style_stash
 
 
-def _tutorial(args):
+def _tutorial():
+    """Launch tutorial in browser."""
     import webbrowser
 
     webbrowser.open("http://xon.sh/tutorial.html")
 
 
-def _web(args):
-    import subprocess
+def _web(
+    _args,
+    browser=True,
+):
+    """Launch configurator in browser.
 
-    subprocess.run([sys.executable, "-m", "xonsh.webconfig"] + args.orig_args[1:])
+    Parameters
+    ----------
+    browser : --nb, --no-browser, -n
+        don't open browser
+    """
 
+    from xonsh.webconfig import main
 
-def _jupyter_kernel(args):
-    """Make xonsh available as a Jupyter kernel."""
-    try:
-        from jupyter_client.kernelspec import KernelSpecManager, NoSuchKernel
-    except ImportError as e:
-        raise ImportError("Jupyter not found in current Python environment") from e
-
-    ksm = KernelSpecManager()
-
-    root = args.root
-    prefix = args.prefix if args.prefix else sys.prefix
-    user = args.user
-    spec = {
-        "argv": [
-            sys.executable,
-            "-m",
-            "xonsh.jupyter_kernel",
-            "-f",
-            "{connection_file}",
-        ],
-        "display_name": "Xonsh",
-        "language": "xonsh",
-        "codemirror_mode": "shell",
-    }
-
-    if root and prefix:
-        # os.path.join isn't used since prefix is probably absolute
-        prefix = root + prefix
-
-    try:
-        old_jup_kernel = ksm.get_kernel_spec(XONSH_JUPYTER_KERNEL)
-        if not old_jup_kernel.resource_dir.startswith(prefix):
-            print(
-                "Removing existing Jupyter kernel found at {0}".format(
-                    old_jup_kernel.resource_dir
-                )
-            )
-        ksm.remove_kernel_spec(XONSH_JUPYTER_KERNEL)
-    except NoSuchKernel:
-        pass
-
-    if sys.platform == "win32":
-        # Ensure that conda-build detects the hard coded prefix
-        spec["argv"][0] = spec["argv"][0].replace(os.sep, os.altsep)
-        prefix = prefix.replace(os.sep, os.altsep)
-
-    with tempfile.TemporaryDirectory() as d:
-        os.chmod(d, 0o755)  # Starts off as 700, not user readable
-        with open(os.path.join(d, "kernel.json"), "w") as f:
-            json.dump(spec, f, sort_keys=True)
-
-        print("Installing Jupyter kernel spec:")
-        print("  root: {0!r}".format(root))
-        if user:
-            print("  as user: {0}".format(user))
-        elif root and prefix:
-            print("  combined prefix {0!r}".format(prefix))
-        else:
-            print("  prefix: {0!r}".format(prefix))
-        ksm.install_kernel_spec(
-            d, XONSH_JUPYTER_KERNEL, user=user, prefix=(None if user else prefix)
-        )
-        return 0
+    main.serve(browser)
 
 
-@functools.lru_cache(1)
-def _xonfig_create_parser():
-    p = argparse.ArgumentParser(
-        prog="xonfig", description="Manages xonsh configuration."
-    )
-    subp = p.add_subparsers(title="action", dest="action")
-    info = subp.add_parser(
-        "info", help=("displays configuration information, " "default action")
-    )
-    info.add_argument(
-        "--json", action="store_true", default=False, help="reports results as json"
-    )
-    web = subp.add_parser("web", help="Launch configurator in browser.")
-    web.add_argument(
-        "--no-browser",
-        action="store_false",
-        dest="browser",
-        default=True,
-        help="don't open browser",
-    )
-    wiz = subp.add_parser("wizard", help="Launch configurator in terminal")
-    wiz.add_argument(
-        "--file", default=None, help="config file location, default=$XONSHRC"
-    )
-    wiz.add_argument(
-        "--confirm",
-        action="store_true",
-        default=False,
-        help="confirm that the wizard should be run.",
-    )
-    sty = subp.add_parser("styles", help="prints available xonsh color styles")
-    sty.add_argument(
-        "--json", action="store_true", default=False, help="reports results as json"
-    )
-    colors = subp.add_parser("colors", help="preview color style")
-    colors.add_argument(
-        "style", nargs="?", default=None, help="style to preview, default: <current>"
-    )
-    subp.add_parser("tutorial", help="Launch tutorial in browser.")
-    kern = subp.add_parser("jupyter-kernel", help="Generate xonsh kernel for jupyter.")
-    kern.add_argument(
-        "--user",
-        action="store_true",
-        default=False,
-        help="Install kernel spec in user config directory.",
-    )
-    kern.add_argument(
-        "--root",
-        default=None,
-        help="Install relative to this alternate root directory.",
-    )
-    kern.add_argument(
-        "--prefix", default=None, help="Installation prefix for bin, lib, etc."
-    )
+class XonfigAlias(ArgParserAlias):
+    """Manage xonsh configuration."""
 
-    return p
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.extra_commands = []
+
+    def add_command(self, fn):
+        self.extra_commands.append(fn)
+
+    def build(self):
+        parser = self.create_parser(prog="xonfig")
+        # register as default action
+        parser.add_command(_info, default=True)
+        parser.add_command(_web)
+        parser.add_command(_wizard)
+        parser.add_command(_styles)
+        parser.add_command(_colors)
+        parser.add_command(_tutorial)
+        for fn in self.extra_commands:
+            parser.add_command(fn)
+
+        return parser
 
 
-XONFIG_MAIN_ACTIONS = {
-    "info": _info,
-    "web": _web,
-    "wizard": _wizard,
-    "styles": _styles,
-    "colors": _colors,
-    "tutorial": _tutorial,
-    "jupyter-kernel": _jupyter_kernel,
-}
-
-
-def xonfig_main(args=None):
-    """Main xonfig entry point."""
-    if not args or (
-        args[0] not in XONFIG_MAIN_ACTIONS and args[0] not in {"-h", "--help"}
-    ):
-        args.insert(0, "info")
-    parser = _xonfig_create_parser()
-    ns = parser.parse_args(args)
-    ns.orig_args = args
-    if ns.action is None:  # apply default action
-        ns = parser.parse_args(["info"] + args)
-    return XONFIG_MAIN_ACTIONS[ns.action](ns)
+xonfig_main = XonfigAlias(threadable=False)
 
 
 @lazyobject
@@ -801,7 +745,7 @@ def STRIP_COLOR_RE():
 
 
 def _align_string(string, align="<", fill=" ", width=80):
-    """ Align and pad a color formatted string """
+    """Align and pad a color formatted string"""
     linelen = len(STRIP_COLOR_RE.sub("", string))
     padlen = max(width - linelen, 0)
     if align == "^":
@@ -877,7 +821,7 @@ WELCOME_MSG = [
 
 
 def print_welcome_screen():
-    shell_type = builtins.__xonsh__.env.get("SHELL_TYPE")
+    shell_type = XSH.env.get("SHELL_TYPE")
     subst = dict(tagline=random.choice(list(TAGLINES)), version=XONSH_VERSION)
     for elem in WELCOME_MSG:
         if elem == "[SHELL_TYPE_WARNING]":

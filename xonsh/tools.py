@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Misc. xonsh tools.
 
 The following implementations were forked from the IPython project:
@@ -17,41 +16,75 @@ Implementations:
 * indent()
 
 """
-import builtins
+
+import ast
 import collections
 import collections.abc as cabc
 import contextlib
 import ctypes
 import datetime
-from distutils.version import LooseVersion
 import functools
 import glob
 import itertools
+import operator
 import os
 import pathlib
 import re
+import shlex
+import signal
+import string
 import subprocess
 import sys
 import threading
 import traceback
-import warnings
-import operator
-import ast
-import string
 import typing as tp
+import warnings
+from contextlib import contextmanager
+
+try:
+    from prompt_toolkit.cursor_shapes import (
+        CursorShape,
+        CursorShapeConfig,
+        DynamicCursorShapeConfig,
+        ModalCursorShapeConfig,
+        SimpleCursorShapeConfig,
+    )
+
+    HAVE_CURSOR_SHAPE = True
+except ImportError:
+    HAVE_CURSOR_SHAPE = False
 
 # adding imports from further xonsh modules is discouraged to avoid circular
 # dependencies
 from xonsh import __version__
-from xonsh.lazyasd import LazyObject, LazyDict, lazyobject
+from xonsh.lib.lazyasd import LazyDict, LazyObject, lazyobject
 from xonsh.platform import (
     DEFAULT_ENCODING,
+    HAS_PYGMENTS,
     ON_LINUX,
     ON_WINDOWS,
     expanduser,
     os_environ,
     pygments_version_info,
 )
+
+
+@contextmanager
+def chdir(adir, mkdir=False, expanduser=True):
+    """Context manager for switching current directory to another.
+    Note! You can use ``with p'/path'.cd(): $[ls]`` to achieve the same.
+    """
+    adir = pathlib.Path(adir)
+    old_dir = os.getcwd()
+    if expanduser:
+        adir = adir.expanduser()
+    if mkdir:
+        os.makedirs(adir, exist_ok=True)
+    os.chdir(adir)
+    try:
+        yield
+    finally:
+        os.chdir(old_dir)
 
 
 @functools.lru_cache(1)
@@ -61,6 +94,13 @@ def is_superuser():
     else:
         rtn = os.getuid() == 0
     return rtn
+
+
+@lazyobject
+def xsh():
+    from xonsh.built_ins import XSH
+
+    return XSH
 
 
 class XonshError(Exception):
@@ -77,7 +117,7 @@ class XonshCalledProcessError(XonshError, subprocess.CalledProcessError):
     returncode of the command is nonzero.
 
     Example:
-    -------
+    --------
         try:
             for line in !(ls):
                 print(line)
@@ -99,8 +139,7 @@ class XonshCalledProcessError(XonshError, subprocess.CalledProcessError):
 def expand_path(s, expand_user=True):
     """Takes a string path and expands ~ to home if expand_user is set
     and environment vars if EXPAND_ENV_VARS is set."""
-    session = getattr(builtins, "__xonsh__", None)
-    env = os_environ if session is None else getattr(session, "env", os_environ)
+    env = xsh.env or os_environ
     if env.get("EXPAND_ENV_VARS", False):
         s = expandvars(s)
     if expand_user:
@@ -121,8 +160,7 @@ def _expandpath(path):
     """Performs environment variable / user expansion on a given path
     if EXPAND_ENV_VARS is set.
     """
-    session = getattr(builtins, "__xonsh__", None)
-    env = os_environ if session is None else getattr(session, "env", os_environ)
+    env = xsh.env or os_environ
     expand_user = env.get("EXPAND_ENV_VARS", False)
     return expand_path(path, expand_user=expand_user)
 
@@ -139,8 +177,7 @@ def decode_bytes(b):
     """Tries to decode the bytes using XONSH_ENCODING if available,
     otherwise using sys.getdefaultencoding().
     """
-    session = getattr(builtins, "__xonsh__", None)
-    env = os_environ if session is None else getattr(session, "env", os_environ)
+    env = xsh.env or os_environ
     enc = env.get("XONSH_ENCODING") or DEFAULT_ENCODING
     err = env.get("XONSH_ENCODING_ERRORS") or "strict"
     return b.decode(encoding=enc, errors=err)
@@ -183,7 +220,7 @@ class EnvPath(cabc.MutableSequence):
                 # in order to be able to retrieve it later, for cases such as
                 # when a generator expression was passed as an argument
                 args = list(args)
-                if not all(isinstance(i, (str, bytes, pathlib.Path)) for i in args):
+                if not all(isinstance(i, str | bytes | pathlib.Path) for i in args):
                     # make TypeError's message as informative as possible
                     # when given an invalid initialization sequence
                     raise TypeError(
@@ -193,8 +230,7 @@ class EnvPath(cabc.MutableSequence):
                 self._l = args
             else:
                 raise TypeError(
-                    "EnvPath cannot be initialized with items "
-                    "of type %s" % type(args)
+                    f"EnvPath cannot be initialized with items of type {type(args)}: {args!r}"
                 )
 
     def __getitem__(self, item):
@@ -213,8 +249,24 @@ class EnvPath(cabc.MutableSequence):
     def __delitem__(self, key):
         self._l.__delitem__(key)
 
+    @staticmethod
+    def _prepare_path(p):
+        return str(expand_path(p))
+
     def insert(self, index, value):
-        self._l.insert(index, value)
+        self._l.insert(index, self._prepare_path(value))
+
+    def append(self, value):
+        self._l.append(self._prepare_path(value))
+
+    def prepend(self, value):
+        self._l.insert(0, self._prepare_path(value))
+
+    def remove(self, value):
+        try:
+            self._l.remove(self._prepare_path(value))
+        except ValueError:
+            print(f"EnvPath warning: path {repr(value)} not found.", file=sys.stderr)
 
     @property
     def paths(self):
@@ -232,7 +284,7 @@ class EnvPath(cabc.MutableSequence):
         return all(map(operator.eq, self, other))
 
     def _repr_pretty_(self, p, cycle):
-        """ Pretty print path list """
+        """Pretty print path list"""
         if cycle:
             p.text("EnvPath(...)")
         else:
@@ -277,19 +329,37 @@ class EnvPath(cabc.MutableSequence):
         None
 
         """
+        data = self._prepare_path(data)
         if data not in self._l:
             self._l.insert(0 if front else len(self._l), data)
         elif replace:
-            self._l.remove(data)
+            # https://stackoverflow.com/a/25251306/1621381
+            self._l = list(filter(lambda x: x != data, self._l))
             self._l.insert(0 if front else len(self._l), data)
+
+
+class FlexibleFormatter(string.Formatter):
+    """Support nested fields inside conditional formatters
+
+    e.g. template ``{user:| {RED}{}{RESET}}`` will become ``| {RED}user{RESET}`` when user=user.
+    """
+
+    def get_value(self, key: "int|str", args, kwargs) -> str:
+        if isinstance(key, int):
+            return args[key]
+        else:
+            if key in kwargs:
+                return kwargs[key]
+            # in case of colors, this will work without nested braces
+            return "{" + key + "}"
 
 
 @lazyobject
 def FORMATTER():
-    return string.Formatter()
+    return FlexibleFormatter()
 
 
-class DefaultNotGivenType(object):
+class DefaultNotGivenType:
     """Singleton for representing when no default value is given."""
 
     __inst: tp.Optional["DefaultNotGivenType"] = None
@@ -332,7 +402,7 @@ def balanced_parens(line, mincol=0, maxcol=None, lexer=None):
     """Determines if parentheses are balanced in an expression."""
     line = line[mincol:maxcol]
     if lexer is None:
-        lexer = builtins.__xonsh__.execer.parser.lexer
+        lexer = xsh.execer.parser.lexer
     if "(" not in line and ")" not in line:
         return True
     cnt = 0
@@ -347,6 +417,15 @@ def balanced_parens(line, mincol=0, maxcol=None, lexer=None):
     return cnt == 0
 
 
+def ends_with_colon_token(line, lexer=None):
+    """Determines whether a line ends with a colon token, ignoring comments."""
+    if lexer is None:
+        lexer = xsh.execer.parser.lexer
+    lexer.input(line)
+    toks = list(lexer)
+    return len(toks) > 0 and toks[-1].type == "COLON"
+
+
 def find_next_break(line, mincol=0, lexer=None):
     """Returns the column number of the next logical break in subproc mode.
     This function may be useful in finding the maxcol argument of
@@ -355,7 +434,7 @@ def find_next_break(line, mincol=0, lexer=None):
     if mincol >= 1:
         line = line[mincol:]
     if lexer is None:
-        lexer = builtins.__xonsh__.execer.parser.lexer
+        lexer = xsh.execer.parser.lexer
     if RE_END_TOKS.search(line) is None:
         return None
     maxcol = None
@@ -393,11 +472,13 @@ def subproc_toks(
     normal parentheses. Greedy is False by default.
     """
     if lexer is None:
-        lexer = builtins.__xonsh__.execer.parser.lexer
+        lexer = xsh.execer.parser.lexer
+    if hasattr(lexer, "subproc_toks"):
+        return lexer.subproc_toks(line, mincol, maxcol, returnline, greedy)
     if maxcol is None:
         maxcol = len(line) + 1
     lexer.reset()
-    lexer.input(line)
+    lexer.input(line, is_subproc=True)
     toks = []
     lparens = []
     saw_macro = False
@@ -528,14 +609,12 @@ def get_line_continuation():
     mode on Windows the backslash must be preceded by a space. This is because
     paths on Windows may end in a backslash.
     """
-    if (
-        ON_WINDOWS
-        and hasattr(builtins.__xonsh__, "env")
-        and builtins.__xonsh__.env.get("XONSH_INTERACTIVE", False)
-    ):
-        return " \\"
-    else:
-        return "\\"
+    if ON_WINDOWS:
+        env = getattr(xsh, "env", None) or {}
+        if env.get("XONSH_INTERACTIVE", False):
+            return " \\"
+
+    return "\\"
 
 
 def get_logical_line(lines, idx):
@@ -617,7 +696,7 @@ def subexpr_before_unbalanced(expr, ltok, rtok):
     subexpr, _, post = expr.rpartition(ltok)
     nrtoks_in_post = post.count(rtok)
     while nrtoks_in_post != 0:
-        for i in range(nrtoks_in_post):
+        for _ in range(nrtoks_in_post):
             subexpr, _, post = subexpr.rpartition(ltok)
         nrtoks_in_post = post.count(rtok)
     _, _, subexpr = subexpr.rpartition(rtok)
@@ -658,7 +737,7 @@ def safe_hasattr(obj, attr):
     try:
         getattr(obj, attr)
         return True
-    except Exception:  # pylint:disable=bare-except
+    except Exception:
         return False
 
 
@@ -703,7 +782,7 @@ def get_sep():
     """Returns the appropriate filepath separator char depending on OS and
     xonsh options set
     """
-    if ON_WINDOWS and builtins.__xonsh__.env.get("FORCE_POSIX_PATHS"):
+    if ON_WINDOWS and xsh.env.get("FORCE_POSIX_PATHS"):
         return os.altsep
     else:
         return os.sep
@@ -726,7 +805,7 @@ def fallback(cond, backup):
 # See the Python software license: https://docs.python.org/3/license.html
 # Copyright (c) Python Software Foundation. All rights reserved.
 class _RedirectStream:
-    _stream: tp.Optional[str] = None
+    _stream: str | None = None
 
     def __init__(self, new_target):
         self._new_target = new_target
@@ -766,62 +845,6 @@ class redirect_stderr(_RedirectStream):
     _stream = "stderr"
 
 
-def _yield_accessible_unix_file_names(path):
-    """yield file names of executable files in path."""
-    if not os.path.exists(path):
-        return
-    for file_ in os.scandir(path):
-        try:
-            if file_.is_file() and os.access(file_.path, os.X_OK):
-                yield file_.name
-        except OSError:
-            # broken Symlink are neither dir not files
-            pass
-
-
-def _executables_in_posix(path):
-    if not os.path.exists(path):
-        return
-    else:
-        yield from _yield_accessible_unix_file_names(path)
-
-
-def _executables_in_windows(path):
-    if not os.path.isdir(path):
-        return
-    extensions = builtins.__xonsh__.env["PATHEXT"]
-    try:
-        for x in os.scandir(path):
-            try:
-                is_file = x.is_file()
-            except OSError:
-                continue
-            if is_file:
-                fname = x.name
-            else:
-                continue
-            base_name, ext = os.path.splitext(fname)
-            if ext.upper() in extensions:
-                yield fname
-    except FileNotFoundError:
-        # On Windows, there's no guarantee for the directory to really
-        # exist even if isdir returns True. This may happen for instance
-        # if the path contains trailing spaces.
-        return
-
-
-def executables_in(path):
-    """Returns a generator of files in path that the user could execute. """
-    if ON_WINDOWS:
-        func = _executables_in_windows
-    else:
-        func = _executables_in_posix
-    try:
-        yield from func(path)
-    except PermissionError:
-        return
-
-
 def debian_command_not_found(cmd):
     """Uses the debian/ubuntu command-not-found utility to suggest packages for a
     command that cannot currently be found.
@@ -829,7 +852,7 @@ def debian_command_not_found(cmd):
     if not ON_LINUX:
         return ""
 
-    cnf = builtins.__xonsh__.commands_cache.lazyget(
+    cnf = xsh.commands_cache.lazyget(
         "command-not-found", ("/usr/lib/command-not-found",)
     )[0]
 
@@ -838,12 +861,17 @@ def debian_command_not_found(cmd):
 
     c = "{0} {1}; exit 0"
     s = subprocess.check_output(
-        c.format(cnf, cmd),
-        universal_newlines=True,
+        c.format(cnf, shlex.quote(cmd)),
+        text=True,
         stderr=subprocess.STDOUT,
         shell=True,
     )
-    s = "\n".join(s.rstrip().splitlines()).strip()
+    lines = [
+        line
+        for line in s.rstrip().splitlines()
+        if not line.endswith(": command not found")
+    ]
+    s = "\n".join(lines).strip()
     return s
 
 
@@ -874,7 +902,8 @@ def command_not_found(cmd, env):
     return rtn
 
 
-def suggest_commands(cmd, env, aliases):
+@functools.lru_cache
+def suggest_commands(cmd, env):
     """Suggests alternative commands given an environment and aliases."""
     if not env.get("SUGGEST_COMMANDS"):
         return ""
@@ -885,15 +914,15 @@ def suggest_commands(cmd, env, aliases):
     cmd = cmd.lower()
     suggested = {}
 
-    for alias in builtins.aliases:
+    for alias in xsh.aliases:
         if alias not in suggested:
             if levenshtein(alias.lower(), cmd, thresh) < thresh:
                 suggested[alias] = "Alias"
 
-    for _cmd in builtins.__xonsh__.commands_cache.all_commands:
+    for _cmd in xsh.commands_cache.all_commands:
         if _cmd not in suggested:
             if levenshtein(_cmd.lower(), cmd, thresh) < thresh:
-                suggested[_cmd] = "Command ({0})".format(_cmd)
+                suggested[_cmd] = f"Command ({_cmd})"
 
     suggested = collections.OrderedDict(
         sorted(
@@ -906,13 +935,13 @@ def suggest_commands(cmd, env, aliases):
         rtn = command_not_found(cmd, env)
     else:
         oneof = "" if num == 1 else "one of "
-        tips = "Did you mean {}the following?".format(oneof)
+        tips = f"Did you mean {oneof}the following?"
         items = list(suggested.popitem(False) for _ in range(num))
         length = max(len(key) for key, _ in items) + 2
         alternatives = "\n".join(
             "    {: <{}} {}".format(key + ":", length, val) for key, val in items
         )
-        rtn = "{}\n{}".format(tips, alternatives)
+        rtn = f"{tips}\n{alternatives}"
         c = command_not_found(cmd, env)
         rtn += ("\n\n" + c) if len(c) > 0 else ""
     return rtn
@@ -920,7 +949,7 @@ def suggest_commands(cmd, env, aliases):
 
 def _get_manual_env_var(name, default=None):
     """Returns if the given variable is manually set as well as it's value."""
-    env = getattr(builtins.__xonsh__, "env", None)
+    env = getattr(xsh, "env", None)
     if env is None:
         env = os_environ
         manually_set = name in env
@@ -939,7 +968,7 @@ def print_warning(msg):
         # Notify about the traceback output possibility if neither of
         # the two options have been manually set
         sys.stderr.write(
-            "xonsh: For full traceback set: " "$XONSH_SHOW_TRACEBACK = True\n"
+            "xonsh: For full traceback set: $XONSH_SHOW_TRACEBACK = True\n"
         )
     # convert show_trace to bool if necessary
     if not is_bool(show_trace):
@@ -967,19 +996,63 @@ def print_warning(msg):
     sys.stderr.write(msg)
 
 
-def print_exception(msg=None):
-    """Print exceptions with/without traceback."""
+def print_exception(msg=None, exc_info=None, source_msg=None):
+    """Print given exception (or current if None) with/without traceback and set sys.last_exc accordingly."""
+
+    # is no exec_info() triple is given, use the exception beeing handled at the moment
+    if exc_info is None:
+        exc_info = sys.exc_info()
+
+    # these values (initialized with their default for traceback.print_exception) control how an exception is printed
+    limit = None
+    chain = True
+
+    _, debug_level = _get_manual_env_var("XONSH_DEBUG", 0)
+
+    # the interal state of the parsers stack is
+    # not helpful in normal operation (XONSH_DEBUG == 0).
+    # this is also done to be consistent with python
+    is_syntax_error = issubclass(exc_info[0], SyntaxError)
+
+    # XonshErrors don't show where in the users code they occured
+    # (most are reported deeper in the callstack, e.g. see procs/pipelines.py),
+    # but only show non-helpful xonsh internals.
+    # These are only relevent when developing/debugging xonsh itself.
+    # Therefore, dont print these traces until this gets overhauled.
+    is_xonsh_error = exc_info[0] in (XonshError, XonshCalledProcessError)
+
+    # hide unhelpful traces if not debugging
+    hide_stacktrace = debug_level == 0 and (is_syntax_error or is_xonsh_error)
+    if hide_stacktrace:
+        limit = 0
+        chain = False
+
+    if xsh.env.get("XONSH_SHOW_TRACEBACK", False):
+        """
+        This moved under ``XONSH_SHOW_TRACEBACK`` because it looks that python's
+        internal machinery behind ``sys.last_*`` is not thread safe
+        when traceback is not printed (#5408).
+        """
+        if sys.version_info >= (3, 12):
+            # https://docs.python.org/3/library/sys.html#sys.last_exc
+            sys.last_exc = exc_info
+        else:
+            sys.last_type, sys.last_value, sys.last_traceback = exc_info
+
     manually_set_trace, show_trace = _get_manual_env_var("XONSH_SHOW_TRACEBACK", False)
     manually_set_logfile, log_file = _get_manual_env_var("XONSH_TRACEBACK_LOGFILE")
     if (not manually_set_trace) and (not manually_set_logfile):
         # Notify about the traceback output possibility if neither of
         # the two options have been manually set
         sys.stderr.write(
-            "xonsh: For full traceback set: " "$XONSH_SHOW_TRACEBACK = True\n"
+            "xonsh: For full traceback set: $XONSH_SHOW_TRACEBACK = True\n"
         )
     # convert show_trace to bool if necessary
     if not is_bool(show_trace):
         show_trace = to_bool(show_trace)
+
+    if source_msg:
+        sys.stderr.write(source_msg + "\n")
     # if the trace option has been set, print all traceback info to stderr
     if show_trace:
         # notify user about XONSH_TRACEBACK_LOGFILE if it has
@@ -989,7 +1062,9 @@ def print_exception(msg=None):
                 "xonsh: To log full traceback to a file set: "
                 "$XONSH_TRACEBACK_LOGFILE = <filename>\n"
             )
-        traceback.print_exc()
+
+        display_colored_error_message(exc_info)
+
     # additionally, check if a file for traceback logging has been
     # specified and convert to a proper option if needed
     log_file = to_logfile_opt(log_file)
@@ -997,22 +1072,59 @@ def print_exception(msg=None):
         # if log_file <> '' or log_file <> None, append
         # traceback log there as well
         with open(os.path.abspath(log_file), "a") as f:
-            traceback.print_exc(file=f)
+            traceback.print_exception(*exc_info, limit=limit, chain=chain, file=f)
 
     if not show_trace:
         # if traceback output is disabled, print the exception's
         # error message on stderr.
-        display_error_message()
+        if not xsh.env.get("XONSH_SHOW_TRACEBACK") and xsh.env.get(
+            "RAISE_SUBPROC_ERROR"
+        ):
+            display_colored_error_message(exc_info, limit=1)
+        else:
+            display_error_message(exc_info)
     if msg:
         msg = msg if msg.endswith("\n") else msg + "\n"
         sys.stderr.write(msg)
 
 
-def display_error_message(strip_xonsh_error_types=True):
+def display_colored_error_message(exc_info, strip_xonsh_error_types=True, limit=None):
+    no_trace_and_raise_subproc_error = not xsh.env.get(
+        "XONSH_SHOW_TRACEBACK"
+    ) and xsh.env.get("RAISE_SUBPROC_ERROR")
+
+    if no_trace_and_raise_subproc_error:
+        limit = 1
+
+    content = traceback.format_exception(*exc_info, limit=limit)
+
+    if no_trace_and_raise_subproc_error and "Error:" in content[-1]:
+        content = [content[-1]]
+
+    traceback_str = "".join([v for v in content])
+
+    # color the traceback if available
+    _, interactive = _get_manual_env_var("XONSH_INTERACTIVE", 0)
+    _, color_results = _get_manual_env_var("COLOR_RESULTS", 0)
+    shell_loaded = hasattr(xsh.shell, "shell")  # do not color traceback in xonshrc file
+    if not interactive or not color_results or not shell_loaded or not HAS_PYGMENTS:
+        sys.stderr.write(traceback_str)
+        return
+
+    import pygments.lexers.python
+
+    lexer = pygments.lexers.python.PythonTracebackLexer()
+    tokens = list(pygments.lex(traceback_str, lexer=lexer))
+    # this goes to stdout, but since we are interactive it doesn't matter
+    print_color(tokens, end="", file=sys.stderr)
+    return
+
+
+def display_error_message(exc_info, strip_xonsh_error_types=True):
     """
-    Prints the error message of the current exception on stderr.
+    Prints the error message of the given sys.exc_info() triple on stderr.
     """
-    exc_type, exc_value, exc_traceback = sys.exc_info()
+    exc_type, exc_value, exc_traceback = exc_info
     exception_only = traceback.format_exception_only(exc_type, exc_value)
     if exc_type is XonshError and strip_xonsh_error_types:
         exception_only[0] = exception_only[0].partition(": ")[-1]
@@ -1214,8 +1326,8 @@ def always_none(x):
 
 
 def ensure_string(x):
-    """Returns a string if x is not a string, and x if it already is."""
-    return str(x)
+    """Returns a string if x is not a string, and x if it already is. If x is None, the empty string is returned."""
+    return str(x) if x is not None else ""
 
 
 def is_path(x):
@@ -1230,11 +1342,10 @@ def is_env_path(x):
 
 def str_to_path(x):
     """Converts a string to a path."""
-    if x is None:
+    if x is None or x == "":
         return None
     elif isinstance(x, str):
-        # checking x is needed to avoid uncontrolled converting empty string to Path('.')
-        return pathlib.Path(x) if x else None
+        return pathlib.Path(x)
     elif isinstance(x, pathlib.Path):
         return x
     elif isinstance(x, EnvPath) and len(x) == 1:
@@ -1243,6 +1354,11 @@ def str_to_path(x):
         raise TypeError(
             f"Variable should be a pathlib.Path, str or single EnvPath type. {type(x)} given."
         )
+
+
+def str_to_abs_path(x):
+    """Converts a string to an absolute path."""
+    return r.absolute() if (r := str_to_path(x)) is not None else r
 
 
 def str_to_env_path(x):
@@ -1255,7 +1371,12 @@ def str_to_env_path(x):
 
 def path_to_str(x):
     """Converts a path to a string."""
-    return str(x)
+    return str(x) if x is not None else ""
+
+
+def abs_path_to_str(x):
+    """Converts an absolute path to a string."""
+    return path_to_str(x.absolute()) if x is not None else path_to_str(x)
 
 
 def env_path_to_str(x):
@@ -1296,7 +1417,7 @@ def to_logfile_opt(x):
     if isinstance(x, os.PathLike):  # type: ignore
         x = str(x)
     if is_logfile_opt(x):
-        return x
+        return expand_path(x) if x else x
     else:
         # if option is not valid, return a proper
         # option and inform the user on stderr
@@ -1356,7 +1477,7 @@ def to_itself(x):
     return x
 
 
-def to_int_or_none(x) -> tp.Optional[int]:
+def to_int_or_none(x) -> int | None:
     """Convert the given value to integer if possible. Otherwise return None"""
     if isinstance(x, str) and x.lower() == "none":
         return None
@@ -1418,6 +1539,33 @@ def SLICE_REG():
     )
 
 
+def to_shlvl(x):
+    """Converts a value to an $SHLVL integer according to bash's behaviour (variables.c::adjust_shell_level)."""
+    if x is None:
+        return 0
+    else:
+        x = str(x)
+    try:
+        return adjust_shlvl(max(0, int(x)), 0)
+    except ValueError:
+        return 0
+
+
+def is_valid_shlvl(x):
+    """Checks whether a variable is a proper $SHLVL integer."""
+    return isinstance(x, int) and to_shlvl(x) == x
+
+
+def adjust_shlvl(old_lvl: int, change: int):
+    """Adjusts an $SHLVL integer according to bash's behaviour (variables.c::adjust_shell_level)."""
+    new_level = old_lvl + change
+    if new_level < 0:
+        new_level = 0
+    elif new_level >= 1000:
+        new_level = 1
+    return new_level
+
+
 def ensure_slice(x):
     """Try to convert an object into a slice, complain on failure"""
     if not x and x != 0:
@@ -1430,19 +1578,19 @@ def ensure_slice(x):
             s = slice(x, x + 1)
         else:
             s = slice(-1, None, None)
-    except ValueError:
+    except ValueError as ex:
         x = x.strip("[]()")
         m = SLICE_REG.fullmatch(x)
         if m:
             groups = (int(i) if i else None for i in m.groups())
             s = slice(*groups)
         else:
-            raise ValueError("cannot convert {!r} to slice".format(x))
+            raise ValueError(f"cannot convert {x!r} to slice") from ex
     except TypeError:
         try:
             s = slice(*(int(i) for i in x))
-        except (TypeError, ValueError):
-            raise ValueError("cannot convert {!r} to slice".format(x))
+        except (TypeError, ValueError) as ex:
+            raise ValueError(f"cannot convert {x!r} to slice") from ex
     return s
 
 
@@ -1451,8 +1599,8 @@ def get_portions(it, slices):
 
     Parameters
     ----------
-    it: iterable
-    slices: a slice or a list of slice objects
+    it : iterable
+    slices : a slice or a list of slice objects
     """
     if is_slice(slices):
         slices = [slices]
@@ -1605,14 +1753,56 @@ def ptk2_color_depth_setter(x):
     elif x in {"", None}:
         x = ""
     else:
-        msg = '"{}" is not a valid value for $PROMPT_TOOLKIT_COLOR_DEPTH. '.format(x)
-        warnings.warn(msg, RuntimeWarning)
+        msg = f'"{x}" is not a valid value for $PROMPT_TOOLKIT_COLOR_DEPTH. '
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
         x = ""
     if x == "" and "PROMPT_TOOLKIT_COLOR_DEPTH" in os_environ:
         del os_environ["PROMPT_TOOLKIT_COLOR_DEPTH"]
     else:
         os_environ["PROMPT_TOOLKIT_COLOR_DEPTH"] = x
     return x
+
+
+def ptk_cursor_shape_vi_modal():
+    if xsh.env.get("VI_MODE"):
+        return ModalCursorShapeConfig()
+    else:
+        return SimpleCursorShapeConfig()
+
+
+def to_ptk_cursor_shape(x):
+    if not HAVE_CURSOR_SHAPE:
+        return None
+    if isinstance(x, CursorShape | CursorShapeConfig):
+        return x
+    if not isinstance(x, str):
+        raise ValueError("invalid cursor shape")
+    x = str(x).upper().replace("-", "_")
+    if x == "MODAL":
+        return ModalCursorShapeConfig()
+    elif x == "MODAL_VI_MODE_ONLY":
+        return DynamicCursorShapeConfig(ptk_cursor_shape_vi_modal)
+    try:
+        return CursorShape[x]
+    except KeyError:
+        return SimpleCursorShapeConfig()
+
+
+def to_ptk_cursor_shape_display_value(x):
+    if not x:
+        return ""
+    if isinstance(x, SimpleCursorShapeConfig):
+        x = x.get_cursor_shape(None)
+    if isinstance(x, CursorShape):
+        x = x.value.lower().replace("_", "-")
+        if x.startswith("-"):
+            x = x[1:]
+        return x
+    if isinstance(x, ModalCursorShapeConfig):
+        return "modal"
+    if isinstance(x, DynamicCursorShapeConfig):
+        return "modal-vi-mode-only"
+    return "unknown"
 
 
 def is_completions_display_value(x):
@@ -1630,9 +1820,9 @@ def to_completions_display_value(x):
     elif x in {"single", "readline"}:
         pass
     else:
-        msg = '"{}" is not a valid value for $COMPLETIONS_DISPLAY. '.format(x)
+        msg = f'"{x}" is not a valid value for $COMPLETIONS_DISPLAY. '
         msg += 'Using "multi".'
-        warnings.warn(msg, RuntimeWarning)
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
         x = "multi"
     return x
 
@@ -1659,16 +1849,39 @@ def to_completion_mode(x):
         warnings.warn(
             f"'{x}' is not valid for $COMPLETION_MODE, must be one of {CANONIC_COMPLETION_MODES}.  Using 'default'.",
             RuntimeWarning,
+            stacklevel=2,
         )
         y = "default"
     return y
 
 
-def is_str_str_dict(x):
-    """Tests if something is a str:str dictionary"""
-    return isinstance(x, dict) and all(
-        isinstance(k, str) and isinstance(v, str) for k, v in x.items()
-    )
+def is_tok_color_dict(x):
+    from pygments.token import _TokenType, string_to_tokentype
+
+    from xonsh.shells.ptk_shell import _style_from_pygments_dict
+
+    """Tests if something is a Token:Style dictionary"""
+    if not isinstance(x, dict):
+        return False
+    """Check if is a Token:str dict"""
+    for k, v in x.items():
+        if not isinstance(v, str):
+            return False
+        try:
+            k = _TokenType(k)
+            string_to_tokentype(k)
+        except (TypeError, AttributeError):
+            msg = f'"{k}" is not a valid Token.'
+            warnings.warn(msg, RuntimeWarning, stacklevel=2)
+            return False
+    """Check each str is a valid style"""
+    try:
+        _style_from_pygments_dict(x)
+    except (AssertionError, ValueError):
+        msg = f'"{x}" contains an invalid style.'
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
+        return False
+    return True
 
 
 def to_dict(x):
@@ -1678,20 +1891,20 @@ def to_dict(x):
     try:
         x = ast.literal_eval(x)
     except (ValueError, SyntaxError):
-        msg = '"{}" can not be converted to Python dictionary.'.format(x)
-        warnings.warn(msg, RuntimeWarning)
+        msg = f'"{x}" can not be converted to Python dictionary.'
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
         x = dict()
     return x
 
 
-def to_str_str_dict(x):
-    """Converts a string to str:str dictionary"""
-    if is_str_str_dict(x):
+def to_tok_color_dict(x):
+    """Converts a string to Token:str dictionary"""
+    if is_tok_color_dict(x):
         return x
     x = to_dict(x)
-    if not is_str_str_dict(x):
-        msg = '"{}" can not be converted to str:str dictionary.'.format(x)
-        warnings.warn(msg, RuntimeWarning)
+    if not is_tok_color_dict(x):
+        msg = f'"{x}" can not be converted to Token:str dictionary.'
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
         x = dict()
     return x
 
@@ -1782,10 +1995,20 @@ def is_history_tuple(x):
     if (
         isinstance(x, cabc.Sequence)
         and len(x) == 2
-        and isinstance(x[0], (int, float))
+        and isinstance(x[0], int | float)
         and x[1].lower() in CANON_HISTORY_UNITS
     ):
         return True
+    return False
+
+
+def is_regex(x):
+    """Tests if something is a valid regular expression."""
+    try:
+        re.compile(x)
+        return True
+    except re.error:
+        pass
     return False
 
 
@@ -1837,12 +2060,12 @@ RE_HISTORY_TUPLE = LazyObject(
 
 def to_history_tuple(x):
     """Converts to a canonical history tuple."""
-    if not isinstance(x, (cabc.Sequence, float, int)):
+    if not isinstance(x, cabc.Sequence | float | int):
         raise ValueError("history size must be given as a sequence or number")
     if isinstance(x, str):
         m = RE_HISTORY_TUPLE.match(x.strip().lower())
         return to_history_tuple((m.group(1), m.group(3)))
-    elif isinstance(x, (float, int)):
+    elif isinstance(x, float | int):
         return to_history_tuple((x, "commands"))
     units, converter = HISTORY_UNITS[x[1]]
     value = converter(x[0])
@@ -1851,7 +2074,7 @@ def to_history_tuple(x):
 
 def history_tuple_to_str(x):
     """Converts a valid history tuple to a canonical string."""
-    return "{0} {1}".format(*x)
+    return "{} {}".format(*x)
 
 
 def all_permutations(iterable):
@@ -1865,23 +2088,26 @@ def format_color(string, **kwargs):
     shell instances method of the same name. The results of this function should
     be directly usable by print_color().
     """
-    if hasattr(builtins.__xonsh__.shell, "shell"):
-        return builtins.__xonsh__.shell.shell.format_color(string, **kwargs)
+    if hasattr(xsh.shell, "shell"):
+        return xsh.shell.shell.format_color(string, **kwargs)
     else:
         # fallback for ANSI if shell is not yet initialized
         from xonsh.ansi_colors import ansi_partial_color_format
 
-        style = builtins.__xonsh__.env.get("XONSH_COLOR_STYLE")
+        style = xsh.env.get("XONSH_COLOR_STYLE")
         return ansi_partial_color_format(string, style=style)
 
 
-def print_color(string, **kwargs):
+def print_color(string, color=None, **kwargs):
     """Prints a string that may contain colors. This dispatched to the shell
     method of the same name. Colors will be formatted if they have not already
     been.
     """
-    if hasattr(builtins.__xonsh__.shell, "shell"):
-        builtins.__xonsh__.shell.shell.print_color(string, **kwargs)
+    if color:
+        string = f"{{{color.upper()}}}{string}{{RESET}}"
+
+    if hasattr(xsh.shell, "shell"):
+        xsh.shell.shell.print_color(string, **kwargs)
     else:
         # fallback for ANSI if shell is not yet initialized
         print(format_color(string, **kwargs))
@@ -1889,12 +2115,12 @@ def print_color(string, **kwargs):
 
 def color_style_names():
     """Returns an iterable of all available style names."""
-    return builtins.__xonsh__.shell.shell.color_style_names()
+    return xsh.shell.shell.color_style_names()
 
 
 def color_style():
     """Returns the current color map."""
-    return builtins.__xonsh__.shell.shell.color_style()
+    return xsh.shell.shell.color_style()
 
 
 def register_custom_style(
@@ -1936,25 +2162,25 @@ def register_custom_style(
 
 
 def _token_attr_from_stylemap(stylemap):
-    """yields tokens attr, and index from a stylemap """
+    """yields tokens attr, and index from a stylemap"""
     import prompt_toolkit as ptk
 
-    if builtins.__xonsh__.shell.shell_type == "prompt_toolkit1":
+    if xsh.shell.shell_type == "prompt_toolkit1":
         style = ptk.styles.style_from_dict(stylemap)
         for token in stylemap:
             yield token, style.token_to_attrs[token]
     else:
         style = ptk.styles.style_from_pygments_dict(stylemap)
         for token in stylemap:
-            style_str = "class:{}".format(
-                ptk.styles.pygments.pygments_token_to_classname(token)
+            style_str = (
+                f"class:{ptk.styles.pygments.pygments_token_to_classname(token)}"
             )
             yield (token, style.get_attrs_for_style_str(style_str))
 
 
 def _get_color_lookup_table():
-    """Returns the prompt_toolkit win32 ColorLookupTable """
-    if builtins.__xonsh__.shell.shell_type == "prompt_toolkit1":
+    """Returns the prompt_toolkit win32 ColorLookupTable"""
+    if xsh.shell.shell_type == "prompt_toolkit1":
         from prompt_toolkit.terminal.win32_output import ColorLookupTable
     else:
         from prompt_toolkit.output.win32 import ColorLookupTable
@@ -1962,7 +2188,7 @@ def _get_color_lookup_table():
 
 
 def _get_color_indexes(style_map):
-    """Generates the color and windows color index for a style """
+    """Generates the color and windows color index for a style"""
     table = _get_color_lookup_table()
     for token, attr in _token_attr_from_stylemap(style_map):
         if attr.color:
@@ -2029,16 +2255,14 @@ def _win10_color_map():
         "ansibrightyellow": (249, 241, 165),
         "ansiwhite": (242, 242, 242),
     }
-    return {
-        k: "#{0:02x}{1:02x}{2:02x}".format(r, g, b) for k, (r, g, b) in cmap.items()
-    }
+    return {k: f"#{r:02x}{g:02x}{b:02x}" for k, (r, g, b) in cmap.items()}
 
 
 WIN10_COLOR_MAP = LazyObject(_win10_color_map, globals(), "WIN10_COLOR_MAP")
 
 
 def _win_bold_color_map():
-    """ Map dark ansi colors to lighter version. """
+    """Map dark ansi colors to lighter version."""
     return {
         "ansiblack": "ansibrightblack",
         "ansiblue": "ansibrightblue",
@@ -2059,8 +2283,8 @@ def hardcode_colors_for_win10(style_map):
     in conhost.exe
     """
     modified_style = {}
-    if not builtins.__xonsh__.env["PROMPT_TOOLKIT_COLOR_DEPTH"]:
-        builtins.__xonsh__.env["PROMPT_TOOLKIT_COLOR_DEPTH"] = "DEPTH_24_BIT"
+    if not xsh.env["PROMPT_TOOLKIT_COLOR_DEPTH"]:
+        xsh.env["PROMPT_TOOLKIT_COLOR_DEPTH"] = "DEPTH_24_BIT"
     # Replace all ansi colors with hardcoded colors to avoid unreadable defaults
     # in conhost.exe
     for token, style_str in style_map.items():
@@ -2107,7 +2331,7 @@ def intensify_colors_for_cmd_exe(style_map):
         6: "ansibrightyellow",  # subst yellow with bright yellow
         9: "ansicyan",  # subst intense blue with dark cyan (more readable)
     }
-    if builtins.__xonsh__.shell.shell_type == "prompt_toolkit1":
+    if xsh.shell.shell_type == "prompt_toolkit1":
         replace_colors = ansicolors_to_ptk1_names(replace_colors)
     for token, idx, _ in _get_color_indexes(style_map):
         if idx in replace_colors:
@@ -2120,12 +2344,8 @@ def intensify_colors_on_win_setter(enable):
     environment variable.
     """
     enable = to_bool(enable)
-    if (
-        hasattr(builtins.__xonsh__, "shell")
-        and builtins.__xonsh__.shell is not None
-        and hasattr(builtins.__xonsh__.shell.shell.styler, "style_name")
-    ):
-        delattr(builtins.__xonsh__.shell.shell.styler, "style_name")
+    if xsh.shell is not None and hasattr(xsh.shell.shell.styler, "style_name"):
+        delattr(xsh.shell.shell.styler, "style_name")
     return enable
 
 
@@ -2135,12 +2355,12 @@ def format_std_prepost(template, env=None):
     """
     if not template:
         return ""
-    env = builtins.__xonsh__.env if env is None else env
+    env = xsh.env if env is None else env
     invis = "\001\002"
-    if builtins.__xonsh__.shell is None:
+    if xsh.shell is None:
         # shell hasn't fully started up (probably still in xonshrc)
-        from xonsh.prompt.base import PromptFormatter
         from xonsh.ansi_colors import ansi_partial_color_format
+        from xonsh.prompt.base import PromptFormatter
 
         pf = PromptFormatter()
         s = pf(template)
@@ -2148,7 +2368,7 @@ def format_std_prepost(template, env=None):
         s = ansi_partial_color_format(invis + s + invis, hide=False, style=style)
     else:
         # shell has fully started. do the normal thing
-        shell = builtins.__xonsh__.shell.shell
+        shell = xsh.shell.shell
         try:
             s = shell.prompt_formatter(template)
         except Exception:
@@ -2323,7 +2543,7 @@ def POSIX_ENVVAR_REGEX():
 def expandvars(path):
     """Expand shell variables of the forms $var, ${var} and %var%.
     Unknown variables are left unchanged."""
-    env = builtins.__xonsh__.env
+    env = xsh.env
     if isinstance(path, bytes):
         path = path.decode(
             encoding=env.get("XONSH_ENCODING"), errors=env.get("XONSH_ENCODING_ERRORS")
@@ -2362,7 +2582,7 @@ def backup_file(fname):
 
     base, ext = os.path.splitext(fname)
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")
-    newfname = "%s.%s%s" % (base, timestamp, ext)
+    newfname = f"{base}.{timestamp}{ext}"
     shutil.move(fname, newfname)
 
 
@@ -2372,7 +2592,7 @@ def normabspath(p):
 
 
 def expanduser_abs_path(inp):
-    """ Provides user expanded absolute path """
+    """Provides user expanded absolute path"""
     return os.path.abspath(expanduser(inp))
 
 
@@ -2405,11 +2625,11 @@ def expand_case_matching(s):
         elif c.isalpha():
             folded = c.casefold()
             if len(folded) == 1:
-                c = "[{0}{1}]".format(c.upper(), c.lower())
+                c = f"[{c.upper()}{c.lower()}]"
             else:
-                newc = ["[{0}{1}]?".format(f.upper(), f.lower()) for f in folded[:-1]]
+                newc = [f"[{f.upper()}{f.lower()}]?" for f in folded[:-1]]
                 newc = "".join(newc)
-                newc += "[{0}{1}{2}]".format(folded[-1].upper(), folded[-1].lower(), c)
+                newc += f"[{folded[-1].upper()}{folded[-1].lower()}{c}]"
                 c = newc
         t.append(c)
     return "".join(t)
@@ -2444,11 +2664,11 @@ def _dotglobstr(s):
 
 
 def _iglobpath(s, ignore_case=False, sort_result=None, include_dotfiles=None):
-    s = builtins.__xonsh__.expand_path(s)
+    s = xsh.expand_path(s)
     if sort_result is None:
-        sort_result = builtins.__xonsh__.env.get("GLOB_SORTED")
+        sort_result = xsh.env.get("GLOB_SORTED")
     if include_dotfiles is None:
-        include_dotfiles = builtins.__xonsh__.env.get("DOTGLOB")
+        include_dotfiles = xsh.env.get("DOTGLOB")
     if ignore_case:
         s = expand_case_matching(s)
     if "**" in s and "**/*" not in s:
@@ -2483,14 +2703,14 @@ def iglobpath(s, ignore_case=False, sort_result=None, include_dotfiles=None):
 
 
 def ensure_timestamp(t, datetime_format=None):
-    if isinstance(t, (int, float)):
+    if isinstance(t, int | float):
         return t
     try:
         return float(t)
     except (ValueError, TypeError):
         pass
     if datetime_format is None:
-        datetime_format = builtins.__xonsh__.env["XONSH_DATETIME_FORMAT"]
+        datetime_format = xsh.env["XONSH_DATETIME_FORMAT"]
     if isinstance(t, datetime.datetime):
         t = t.timestamp()
     else:
@@ -2500,7 +2720,7 @@ def ensure_timestamp(t, datetime_format=None):
 
 def format_datetime(dt):
     """Format datetime object to string base on $XONSH_DATETIME_FORMAT Env."""
-    format_ = builtins.__xonsh__.env["XONSH_DATETIME_FORMAT"]
+    format_ = xsh.env["XONSH_DATETIME_FORMAT"]
     return dt.strftime(format_)
 
 
@@ -2542,7 +2762,7 @@ def columnize(elems, width=80, newline="\n"):
     data = [elems[i * nrows : (i + 1) * nrows] for i in range(ncols)]
     colwidths = [max(map(len, d)) + pad for d in data]
     colwidths[-1] -= pad
-    row_t = "".join(["{{row[{i}]: <{{w[{i}]}}}}".format(i=i) for i in range(ncols)])
+    row_t = "".join([f"{{row[{i}]: <{{w[{i}]}}}}" for i in range(ncols)])
     row_t += newline
     lines = [
         row_t.format(row=row, w=colwidths)
@@ -2603,17 +2823,17 @@ def deprecated(deprecated_in=None, removed_in=None):
         message_suffix = ""
 
     def decorated(func):
-        warning_message = "{} has been deprecated".format(func.__name__)
+        warning_message = f"{func.__name__} has been deprecated"
         warning_message += message_suffix
 
         @functools.wraps(func)
         def wrapped(*args, **kwargs):
             _deprecated_error_on_expiration(func.__name__, removed_in)
             func(*args, **kwargs)
-            warnings.warn(warning_message, DeprecationWarning)
+            warnings.warn(warning_message, DeprecationWarning, stacklevel=2)
 
         wrapped.__doc__ = (
-            "{}\n\n{}".format(wrapped.__doc__, warning_message)
+            f"{wrapped.__doc__}\n\n{warning_message}"
             if wrapped.__doc__
             else warning_message
         )
@@ -2625,13 +2845,13 @@ def deprecated(deprecated_in=None, removed_in=None):
 
 def _deprecated_message_suffix(deprecated_in, removed_in):
     if deprecated_in and removed_in:
-        message_suffix = " in version {} and will be removed in version {}".format(
-            deprecated_in, removed_in
+        message_suffix = (
+            f" in version {deprecated_in} and will be removed in version {removed_in}"
         )
     elif deprecated_in and not removed_in:
-        message_suffix = " in version {}".format(deprecated_in)
+        message_suffix = f" in version {deprecated_in}"
     elif not deprecated_in and removed_in:
-        message_suffix = " and will be removed in version {}".format(removed_in)
+        message_suffix = f" and will be removed in version {removed_in}"
     else:
         message_suffix = None
 
@@ -2639,9 +2859,55 @@ def _deprecated_message_suffix(deprecated_in, removed_in):
 
 
 def _deprecated_error_on_expiration(name, removed_in):
+    from packaging.version import Version
+
     if not removed_in:
         return
-    elif LooseVersion(__version__) >= LooseVersion(removed_in):
-        raise AssertionError(
-            "{} has passed its version {} expiry date!".format(name, removed_in)
-        )
+    elif Version(__version__) >= Version(removed_in):
+        raise AssertionError(f"{name} has passed its version {removed_in} expiry date!")
+
+
+def to_repr_pretty_(inst, p, cycle):
+    name = f"{inst.__class__.__module__}.{inst.__class__.__name__}"
+    with p.group(0, name + "(", ")"):
+        if cycle:
+            p.text("...")
+        elif len(inst):
+            p.break_()
+            p.pretty(dict(inst))
+
+
+def get_signal_name(signum):
+    """Return a signal name by the signal number."""
+    for name in dir(signal):
+        if name.startswith("SIG") and getattr(signal, name) == signum:
+            return name
+    return ""
+
+
+def describe_waitpid_status(status):
+    """Describes ``pid, status = os.waitpid(pid, opt)`` status."""
+    funcs = [
+        os.WIFEXITED,
+        os.WEXITSTATUS,
+        os.WIFSIGNALED,
+        os.WTERMSIG,
+        os.WIFSTOPPED,
+        os.WSTOPSIG,
+        os.WCOREDUMP,
+    ]
+    for f in funcs:
+        s = f(status)
+        print(f.__name__, "-", s, get_signal_name(s), "-", f.__doc__)
+
+
+def unquote(s: str, chars="'\""):
+    """Strip paired quotes from string once."""
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in chars:
+        return s[1:-1]
+    return s
+
+
+def endswith_newline(s: str):
+    """Force one new line character end to string."""
+    return s.rstrip("\n") + "\n"

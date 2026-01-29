@@ -1,70 +1,63 @@
-# -*- coding: utf-8 -*-
 """Hooks for pygments syntax highlighting."""
+
 import os
 import re
-import sys
-import builtins
 import stat
+import sys
 from collections import ChainMap
 from collections.abc import MutableMapping
 from keyword import iskeyword
-import typing as tp
 
-from xonsh.lazyimps import os_listxattr
-
-from pygments.lexer import inherit, bygroups, include
+import pygments.util
+from pygments.lexer import bygroups, include, inherit
 from pygments.lexers.agile import Python3Lexer
+from pygments.style import Style
 from pygments.token import (
+    Comment,
+    Error,
+    Generic,
     Keyword,
     Name,
-    Comment,
-    String,
-    Error,
     Number,
     Operator,
-    Generic,
-    Whitespace,
-    Token,
     Punctuation,
+    String,
     Text,
+    Token,
+    Whitespace,
     _TokenType,
 )
-from pygments.style import Style
-import pygments.util
 
-from xonsh.commands_cache import CommandsCache
-from xonsh.lazyasd import LazyObject, LazyDict, lazyobject
-from xonsh.tools import (
-    ON_WINDOWS,
-    intensify_colors_for_cmd_exe,
-    ANSICOLOR_NAMES_MAP,
-    PTK_NEW_OLD_COLOR_MAP,
-    hardcode_colors_for_win10,
-    FORMATTER,
-)
-
+from xonsh.built_ins import XSH
 from xonsh.color_tools import (
-    RE_BACKGROUND,
     BASE_XONSH_COLORS,
+    RE_BACKGROUND,
     RE_XONSH_COLOR,
-    make_palette,
     find_closest_color,
     iscolor,
+    make_palette,
     warn_deprecated_no_color,
 )
-from xonsh.style_tools import norm_name, DEFAULT_STYLE_DICT
-from xonsh.lazyimps import terminal256, html
+from xonsh.events import events
+from xonsh.lib.lazyasd import LazyDict, LazyObject, lazyobject
+from xonsh.lib.lazyimps import html, os_listxattr, terminal256
 from xonsh.platform import (
     os_environ,
-    win_ansi_support,
     ptk_version_info,
     pygments_version_info,
+    win_ansi_support,
 )
-
-from xonsh.pygments_cache import get_style_by_name, add_custom_style
-
-from xonsh.events import events
-
+from xonsh.procs.executables import locate_executable
+from xonsh.pygments_cache import add_custom_style, get_style_by_name
+from xonsh.style_tools import DEFAULT_STYLE_DICT, norm_name
+from xonsh.tools import (
+    ANSICOLOR_NAMES_MAP,
+    FORMATTER,
+    ON_WINDOWS,
+    PTK_NEW_OLD_COLOR_MAP,
+    hardcode_colors_for_win10,
+    intensify_colors_for_cmd_exe,
+)
 
 #
 # Colors and Styles
@@ -73,7 +66,7 @@ from xonsh.events import events
 Color = Token.Color  # alias to new color token namespace
 
 # style rules that are not supported by pygments are stored here
-NON_PYGMENTS_RULES: tp.Dict[str, tp.Dict[str, str]] = {}
+NON_PYGMENTS_RULES: dict[str, dict[str, str]] = {}
 
 # style modifiers not handled by pygments (but supported by ptk)
 PTK_SPECIFIC_VALUES = frozenset(
@@ -169,7 +162,7 @@ def color_name_to_pygments_code(name, styles):
         return styles[token]
     m = RE_XONSH_COLOR.match(name)
     if m is None:
-        raise ValueError("{!r} is not a color!".format(name))
+        raise ValueError(f"{name!r} is not a color!")
     parts = m.groupdict()
     # convert regex match into actual pygments colors
     if parts["reset"] is not None:
@@ -184,7 +177,10 @@ def color_name_to_pygments_code(name, styles):
             fgcolor = color
         else:
             fgcolor = styles[getattr(Color, color)]
-        res = "bg:" + fgcolor
+        if fgcolor == "noinherit":
+            res = "noinherit"
+        else:
+            res = f"bg:{fgcolor}"
     else:
         # have regular, non-background color
         mods = parts["modifiers"]
@@ -242,20 +238,23 @@ def color_token_by_name(xc: tuple, styles=None) -> _TokenType:
     """Returns (color) token corresponding to Xonsh color tuple, side effect: defines token is defined in styles"""
     if not styles:
         try:
-            styles = builtins.__xonsh__.shell.shell.styler.styles  # type:ignore
+            styles = XSH.shell.shell.styler.styles  # type:ignore
         except AttributeError:
-            return Color
+            pass
 
     tokName = xc[0]
-    pc = color_name_to_pygments_code(xc[0], styles)
+    if styles:
+        pc = color_name_to_pygments_code(xc[0], styles)
 
-    if len(xc) > 1:
-        pc += " " + color_name_to_pygments_code(xc[1], styles)
-        tokName += "__" + xc[1]
+        if len(xc) > 1:
+            pc += " " + color_name_to_pygments_code(xc[1], styles)
+            tokName += "__" + xc[1]
 
     token = getattr(Color, norm_name(tokName))
-    if token not in styles or not styles[token]:
+
+    if styles and (token not in styles or not styles[token]):
         styles[token] = pc
+
     return token
 
 
@@ -264,8 +263,8 @@ def partial_color_tokenize(template):
     of tuples mapping the token to the string which has that color.
     These sub-strings maybe templates themselves.
     """
-    if builtins.__xonsh__.shell is not None:
-        styles = __xonsh__.shell.shell.styler.styles
+    if XSH.shell is not None:
+        styles = XSH.shell.shell.styler.styles
     else:
         styles = None
     color = Color.DEFAULT
@@ -386,11 +385,11 @@ class XonshStyle(Style):
                 pygments_style_by_name(value)
             except Exception:
                 print(
-                    "Could not find style {0!r}, using default".format(value),
+                    f"Could not find style {value!r}, using default",
                     file=sys.stderr,
                 )
                 value = "default"
-                builtins.__xonsh__.env["XONSH_COLOR_STYLE"] = value
+                XSH.env["XONSH_COLOR_STYLE"] = value
         cmap = STYLES[value]
         if value == "default":
             self._smap = XONSH_BASE_STYLE.copy()
@@ -398,6 +397,8 @@ class XonshStyle(Style):
             try:
                 style_obj = get_style_by_name(value)()
                 self._smap = style_obj.styles.copy()
+                if not self._smap.get(Name.Builtin):
+                    self._smap[Name.Builtin] = cmap.get(Color.GREEN, "ansigreen")
                 self.highlight_color = style_obj.highlight_color
                 self.background_color = style_obj.background_color
             except (ImportError, pygments.util.ClassNotFound):
@@ -411,13 +412,11 @@ class XonshStyle(Style):
         )
         self._style_name = value
 
-        for file_type, xonsh_color in builtins.__xonsh__.env.get(
-            "LS_COLORS", {}
-        ).items():
+        for file_type, xonsh_color in XSH.env.get("LS_COLORS", {}).items():
             color_token = color_token_by_name(xonsh_color, self.styles)
             file_color_tokens[file_type] = color_token
 
-        if ON_WINDOWS and "prompt_toolkit" in builtins.__xonsh__.shell.shell_type:
+        if ON_WINDOWS and "prompt_toolkit" in XSH.shell.shell_type:
             self.enhance_colors_for_cmd_exe()
 
     @style_name.deleter
@@ -436,7 +435,7 @@ class XonshStyle(Style):
         When using the default style all blue and dark red colors
         are changed to CYAN and intense red.
         """
-        env = builtins.__xonsh__.env
+        env = XSH.env
         # Ensure we are not using the new Windows Terminal, ConEmu or Visual Stuio Code
         if "WT_SESSION" in env or "CONEMUANSI" in env or "VSCODE_PID" in env:
             return
@@ -559,12 +558,16 @@ def register_custom_pygments_style(
         (Style,),
         {
             "styles": custom_styles,
-            "highlight_color": highlight_color
-            if highlight_color is not None
-            else base_style.highlight_color,
-            "background_color": background_color
-            if background_color is not None
-            else base_style.background_color,
+            "highlight_color": (
+                highlight_color
+                if highlight_color is not None
+                else base_style.highlight_color
+            ),
+            "background_color": (
+                background_color
+                if background_color is not None
+                else base_style.background_color
+            ),
         },
     )
 
@@ -1298,7 +1301,7 @@ del (
 def make_pygments_style(palette):
     """Makes a pygments style based on a color palette."""
     global Color
-    style = {getattr(Color, "DEFAULT"): "noinherit"}
+    style = {Color.DEFAULT: "noinherit"}
     for name, t in BASE_XONSH_COLORS.items():
         color = find_closest_color(t, palette)
         style[getattr(Color, name)] = "#" + color
@@ -1346,7 +1349,6 @@ def _monkey_patch_pygments_codes():
 
 @lazyobject
 def XonshTerminal256Formatter():
-
     if (
         ptk_version_info()
         and ptk_version_info() > (2, 0)
@@ -1367,7 +1369,7 @@ def XonshTerminal256Formatter():
             super().__init__(*args, **kwargs)
             # just keep the opening token for colors.
             color_names = set(map(str, Color.subtypes))
-            for name, (opener, closer) in self.style_string.items():
+            for name, (opener, _) in self.style_string.items():
                 if name in color_names:
                     self.style_string[name] = (opener, "")
             # special case DEFAULT, because it is special.
@@ -1393,7 +1395,7 @@ def XonshHtmlFormatter():
             return ""
         elif text.startswith("var") or text.startswith("calc"):
             return text
-        assert False, "wrong color format %r" % text
+        raise AssertionError(f"wrong color format {text!r}")
 
     class XonshHtmlFormatterProxy(html.HtmlFormatter):
         """Proxy class for xonsh HTML formatting that understands.
@@ -1494,15 +1496,15 @@ def on_lscolors_change(key, oldvalue, newvalue, **kwargs):
 events.on_lscolors_change(on_lscolors_change)
 
 
-def color_file(file_path: str, path_stat: os.stat_result) -> tp.Tuple[_TokenType, str]:
+def color_file(file_path: str, path_stat: os.stat_result) -> tuple[_TokenType, str]:
     """Determine color to use for file *approximately* as ls --color would,
        given lstat() results and its path.
 
     Parameters
     ----------
-    file_path:
+    file_path
         relative path of file (as user typed it).
-    path_stat:
+    path_stat
         lstat() results for file_path.
 
     Returns
@@ -1522,7 +1524,7 @@ def color_file(file_path: str, path_stat: os.stat_result) -> tp.Tuple[_TokenType
          This is arguably a bug.
     """
 
-    lsc = builtins.__xonsh__.env["LS_COLORS"]  # type:ignore
+    lsc = XSH.env["LS_COLORS"]  # type:ignore
     color_key = "fi"
 
     # if symlink, get info on (final) target
@@ -1596,21 +1598,15 @@ def color_file(file_path: str, path_stat: os.stat_result) -> tp.Tuple[_TokenType
 
 
 def _command_is_valid(cmd):
-    try:
-        cmd_abspath = os.path.abspath(os.path.expanduser(cmd))
-    except (FileNotFoundError, OSError):
-        return False
-    return (cmd in builtins.__xonsh__.commands_cache and not iskeyword(cmd)) or (
-        os.path.isfile(cmd_abspath) and os.access(cmd_abspath, os.X_OK)
-    )
+    return (cmd in XSH.aliases or locate_executable(cmd)) and not iskeyword(cmd)
 
 
 def _command_is_autocd(cmd):
-    if not builtins.__xonsh__.env.get("AUTO_CD", False):
+    if not XSH.env.get("AUTO_CD", False):
         return False
     try:
         cmd_abspath = os.path.abspath(os.path.expanduser(cmd))
-    except (FileNotFoundError, OSError):
+    except OSError:
         return False
     return os.path.isdir(cmd_abspath)
 
@@ -1631,7 +1627,7 @@ def subproc_arg_callback(_, match):
         path = os.path.expanduser(text)
         path_stat = os.lstat(path)  # lstat() will raise FNF if not a real file
         yieldVal, _ = color_file(path, path_stat)
-    except (FileNotFoundError, OSError):
+    except OSError:
         pass
 
     yield (match.start(), yieldVal, text)
@@ -1649,19 +1645,12 @@ class XonshLexer(Python3Lexer):
 
     def __init__(self, *args, **kwargs):
         # If the lexer is loaded as a pygment plugin, we have to mock
-        # __xonsh__.env and __xonsh__.commands_cache
-        if not hasattr(builtins, "__xonsh__"):
-            from argparse import Namespace
-
-            setattr(builtins, "__xonsh__", Namespace())
-        if not hasattr(builtins.__xonsh__, "env"):
-            setattr(builtins.__xonsh__, "env", {})
+        # __xonsh__.env
+        if getattr(XSH, "env", None) is None:
+            XSH.env = {}
             if ON_WINDOWS:
                 pathext = os_environ.get("PATHEXT", [".EXE", ".BAT", ".CMD"])
-                builtins.__xonsh__.env["PATHEXT"] = pathext.split(os.pathsep)
-        if not hasattr(builtins.__xonsh__, "commands_cache"):
-            setattr(builtins.__xonsh__, "commands_cache", CommandsCache())
-        _ = builtins.__xonsh__.commands_cache.all_commands  # NOQA
+                XSH.env["PATHEXT"] = pathext.split(os.pathsep)
         super().__init__(*args, **kwargs)
 
     tokens = {
@@ -1731,12 +1720,12 @@ class XonshLexer(Python3Lexer):
         ],
     }
 
-    def get_tokens_unprocessed(self, text):
+    def get_tokens_unprocessed(self, text, **_):
         """Check first command, then call super.get_tokens_unprocessed
         with root or subproc state"""
         start = 0
         state = ("root",)
-        m = re.match(r"(\s*)({})".format(COMMAND_TOKEN_RE), text)
+        m = re.match(rf"(\s*)({COMMAND_TOKEN_RE})", text)
         if m is not None:
             yield m.start(1), Whitespace, m.group(1)
             start = m.end(1)
@@ -1758,12 +1747,14 @@ class XonshConsoleLexer(XonshLexer):
 
     name = "Xonsh console lexer"
     aliases = ["xonshcon"]
-    filenames: tp.List[str] = []
+    filenames: list[str] = []
 
     tokens = {
         "root": [
             (r"^(>>>|\.\.\.) ", Generic.Prompt),
             (r"\n(>>>|\.\.\.)", Generic.Prompt),
+            (r"^(@|\.) ", Generic.Prompt),
+            (r"\n(@|\.)", Generic.Prompt),
             (r"\n(?![>.][>.][>.] )([^\n]*)", Generic.Output),
             (r"\n(?![>.][>.][>.] )(.*?)$", Generic.Output),
             inherit,

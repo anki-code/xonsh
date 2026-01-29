@@ -1,14 +1,15 @@
 """File handle readers and related tools."""
-import os
-import io
-import sys
-import time
-import queue
-import ctypes
-import builtins
-import threading
 
-import xonsh.lazyimps as xli
+import ctypes
+import io
+import os
+import queue
+import sys
+import threading
+import time
+
+import xonsh.lib.lazyimps as xli
+from xonsh.built_ins import XSH
 
 
 class QueueReader:
@@ -54,23 +55,20 @@ class QueueReader:
 
     def read(self, size=-1):
         """Reads bytes from the file."""
-        i = 0
-        buf = b""
-        while size < 0 or i != size:
+        buf = bytearray()
+        while size < 0 or len(buf) != size:
             line = self.read_queue()
             if line:
                 buf += line
             else:
                 break
-            i += len(line)
         return buf
 
     def readline(self, size=-1):
         """Reads a line, or a partial line from the file descriptor."""
-        i = 0
         nl = b"\n"
-        buf = b""
-        while size < 0 or i != size:
+        buf = bytearray()
+        while size < 0 or len(buf) != size:
             line = self.read_queue()
             if line:
                 buf += line
@@ -78,7 +76,6 @@ class QueueReader:
                     break
             else:
                 break
-            i += len(line)
         return buf
 
     def _read_all_lines(self):
@@ -315,7 +312,7 @@ def populate_console(reader, fd, buffer, chunksize, queue, expandsize=None):
             buf = xli.winutils.read_console_output_character(
                 x=x, y=y, fd=fd, buf=buffer, bufsize=chunksize, raw=True
             )
-        except (OSError, IOError):
+        except OSError:
             reader.closed = True
             break
         # cursor position and offset
@@ -382,7 +379,7 @@ class ConsoleParallelReader(QueueReader):
         timeout : float, optional
             The queue reading timeout.
         """
-        timeout = timeout or builtins.__xonsh__.env.get("XONSH_PROC_FREQUENCY")
+        timeout = timeout or XSH.env.get("XONSH_PROC_FREQUENCY")
         super().__init__(fd, timeout=timeout)
         self._buffer = buffer  # this cannot be public
         if buffer is None:

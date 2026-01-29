@@ -4,12 +4,13 @@
 *.egg
 .eggs/
 .pytest_cache/
-__amalgam__.py
 lexer_table.py
 parser_table.py
 parser_test_table.py
 xonsh/lexer_table.py
 xonsh/parser_table.py
+xonsh/completion_parser_table.py
+xonsh/parsers/completion_parser_table.py
 tests/lexer_table.py
 tests/parser_table.py
 tests/lexer_test_table.py
@@ -23,6 +24,7 @@ docs/envvarsbody
 docs/xontribsbody
 docs/eventsbody
 xonsh/dev.githash
+xontrib/__init__.py
 
 # temporary files from vim and emacs
 *~
@@ -39,6 +41,8 @@ include/
 venv/
 .venv*/
 
+# Python project version files
+.python-version
 
 # Mac
 .DS_Store
@@ -81,3 +85,25 @@ xonsh/webconfig/js/app.js
 # mypy
 .dmypy.json
 .mypy_cache
+
+# testmon pytest-plugin
+.testmondata
+.testmondata-*
+
+# pdm
+.pdm.toml
+.pdm-python
+__pypackages__
+
+# one can use pip or pdm during development
+pdm.lock
+uv.lock
+
+# asv benchmarks
+.asv/
+
+# nix symlinks
+result
+repl-result-out
+
+.codspeed/

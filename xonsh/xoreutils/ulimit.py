@@ -1,5 +1,7 @@
 """An ulimit implementation for xonsh."""
+
 import resource
+
 from xonsh.tools import print_exception
 
 # all the resource types we know
@@ -275,10 +277,10 @@ Options:""",
 
     for k in _UL_RES:
         r = _UL_RES[k]
-        opts = "-{}, {}".format(k, r[1])
+        opts = f"-{k}, {r[1]}"
         if r[0] is None:
             opts += " (unsupported)"
-        print("{}\n                    {}".format(opts, r[2]), file=file)
+        print(f"{opts}\n                    {r[2]}", file=file)
 
     print(
         """

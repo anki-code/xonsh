@@ -12,7 +12,7 @@
 *.rst text
 *.sh text
 *.txt text
-*.xsh text linguist-language=Python
+*.xsh text
 *.yaml text
 *.yml text
 CONTRIBUTING text
@@ -22,7 +22,7 @@ Makefile text
 README text
 
 # Files in the lazyjson format require LF line endings
-tests/histories/*.json text eol=lf
+tests/history/histories/*.json text eol=lf
 
 # Binary files
 *.ico binary

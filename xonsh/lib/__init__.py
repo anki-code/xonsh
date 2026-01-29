@@ -1,6 +1,1 @@
-# setup import hooks
-import xonsh.imphooks
-
-xonsh.imphooks.install_import_hooks()
-
-del xonsh
+"""Libraries of common functions that used in xonsh components as well as modules borrowed from other projects."""

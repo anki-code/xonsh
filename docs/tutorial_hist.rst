@@ -30,7 +30,7 @@ can be thought of as having the following structure:
          'ts': [start, stop],  # timestamps for the command
          'rtn': int, # command return code
          'out' str,  # stdout and stderr of command, for subproc commands
-                     # this is only available on Linux. Off by default.
+                     # this is only available select OSs. Off by default.
          },
         ...
         ],
@@ -69,7 +69,7 @@ the ``show`` action, see below.
 
 .. code-block:: xonshcon
 
-    >>> history
+    @ history
 
 Also note that the history object itself can be accessed through the xonsh built-in variable
 ``__xonsh__.history``.
@@ -84,11 +84,11 @@ the ``history`` command. For example,
 
 .. code-block:: xonshcon
 
-    >>> 1 + 1
+    @ 1 + 1
     2
-    >>> history show
+    @ history show
      0  1 + 1
-    >>> history
+    @ history
      0  1 + 1
      1  history show
 
@@ -101,7 +101,7 @@ only the even indices from above, you could write:
 
 .. code-block:: xonshcon
 
-    >>> history show ::2
+    @ history show ::2
      0  1 + 1
      2  history
 
@@ -141,7 +141,7 @@ display this identified. For instance,
 
 .. code-block:: xonshcon
 
-    >>> history id
+    @ history id
     ace97177-f8dd-4a8d-8a91-a98ffd0b3d17
 
 ``file`` action
@@ -151,7 +151,7 @@ how you display the path to this file. For example,
 
 .. code-block:: xonshcon
 
-    >>> history file
+    @ history file
     /home/me/.local/share/xonsh/xonsh-ace97177-f8dd-4a8d-8a91-a98ffd0b3d17.json
 
 Note that by these files are stored in ``$XONSH_DATA_DIR`` environment variable. This
@@ -168,7 +168,7 @@ series of lines. However, it can also return a JSON formatted string.
 
 .. code-block:: xonshcon
 
-    >>> history info
+    @ history info
     sessionid: ace97177-f8dd-4a8d-8a91-a98ffd0b3d17
     filename: /home/scopatz/.local/share/xonsh/xonsh-ace97177-f8dd-4a8d-8a91-a98ffd0b3d17.json
     length: 6
@@ -177,7 +177,7 @@ series of lines. However, it can also return a JSON formatted string.
 
 .. code-block:: xonshcon
 
-    >>> history info --json
+    @ history info --json
     {"sessionid": "ace97177-f8dd-4a8d-8a91-a98ffd0b3d17",
      "filename": "/home/scopatz/.local/share/xonsh/xonsh-ace97177-f8dd-4a8d-8a91-a98ffd0b3d17.json",
      "length": 7, "buffersize": 100, "bufferlength": 7}
@@ -198,7 +198,7 @@ the new and next examples, we see the diff looks like:
 
 .. code-block:: xonshcon
 
-    >>> history diff ~/new.json ~/next.json
+    @ history diff ~/new.json ~/next.json
     --- /home/scopatz/new.json (35712b6f-4b15-4ef9-8ce3-b4c781601bc2) [unlocked]
     started: 2015-08-27 15:13:44.873869 stopped: 2015-08-27 15:13:44.918903 runtime: 0:00:00.045034
     +++ /home/scopatz/next.json (70d7186e-3eb9-4b1c-8f82-45bb8a1b7967) [unlocked]
@@ -254,6 +254,17 @@ keep session history free from noise from other sessions. Sometimes, however, it
 may be useful to share entries between shell sessions. In such a case, one can use
 the ``flush`` action to immediately save the session history to disk and make it
 accessible from other shell sessions.
+
+``pull`` action
+================
+Tries to pull the history from parallel sessions and add to the current session.
+
+For example if there are two parallel terminal windows the run of ``history pull``
+command from the second terminal window will get the commands from the first terminal.
+
+The optional `--session-id` allows you to specify that history should only be pulled
+from a specific other session. Most useful when using the JSON history backend, as
+the overhead of an unfiltered `pull` can be significantly higher.
 
 ``clear`` action
 ================
@@ -320,7 +331,7 @@ you could run the following command:
 
 .. code-block:: xonshcon
 
-    >>> history gc --size 1 month
+    @ history gc --size 1 month
 
 
 History Indexing
@@ -337,7 +348,6 @@ filtering can be achieved,
 for the command part:
     - an int returns the command in that position.
     - a slice returns a list of commands.
-    - a string returns the most recent command containing the string.
 
 for the argument part:
     - an int returns the argument of the command in that position.
@@ -356,13 +366,11 @@ examples:
 
 .. code-block:: xonshcon
 
-    >>> echo mkdir with/a/huge/name/
+    @ echo mkdir with/a/huge/name/
     mkdir with/a/huge/name
-    >>> __xonsh__.history[-1, -1]
+    @ __xonsh__.history[-1, -1]
     'with/a/huge/name/'
-    >>> __xonsh__.history['mkdir']
-    'echo mkdir with/a/huge/name'
-    >>> __xonsh__.history[0, 1:]
+    @ __xonsh__.history[0, 1:]
     'mkdir with/a/huge/name'
 
 
@@ -389,8 +397,9 @@ Exciting Technical Detail: Teeing and Pseudo Terminals
 Xonsh is able to capture all stdout and stderr transparently and responsively. For aliases,
 Python code, or xonsh code, this isn't a big deal. It is easy to redirect information
 flowing through ``sys.stdout`` and ``sys.stderr``.  For subprocess commands, this is
-considerably harder. Storing stdout is disabled by default, but can be enabled by setting:
-``$XONSH_STORE_STDOUT=True`` in your ``~/.xonshrc`` file.
+considerably harder. Capturing stdout during the session is disabled by default but can be
+enabled by setting ``$XONSH_CAPTURE_ALWAYS=True``. Storing stdout to the history backend
+is disabled by default but can be enabled by setting ``$XONSH_STORE_STDOUT=True``.
 
 To be able to tee stdout and stderr and still have the terminal responsive, xonsh implements
 its own teeing pseudo-terminal on top of the Python standard library ``pty`` module. You
@@ -406,7 +415,7 @@ Xonsh has a second built-in history backend powered by sqlite (other than
 the JSON version mentioned all above in this tutorial). It shares the same
 functionality as the JSON version in most ways, except it currently doesn't
 support the ``history diff`` action and does not store the output of commands,
-as the json-backend does. E.g. 
+as the json-backend does. E.g.
 `__xonsh__.history[-1].out` will always be `None`.
 
 The Sqlite history backend can provide a speed advantage in loading history

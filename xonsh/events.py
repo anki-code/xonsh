@@ -1,17 +1,18 @@
 """
 Events for xonsh.
 
-In all likelihood, you want builtins.events
+In all likelihood, you want xonsh.built_ins.XSH.events
 
 The best way to "declare" an event is something like::
 
     events.doc('on_spam', "Comes with eggs")
 """
+
 import abc
-import builtins
 import collections.abc
 import inspect
 
+from xonsh.built_ins import XSH
 from xonsh.tools import print_exception
 
 
@@ -22,9 +23,9 @@ def has_kwargs(func):
 
 
 def debug_level():
-    if hasattr(builtins, "__xonsh__") and hasattr(builtins.__xonsh__, "env"):
-        return builtins.__xonsh__.env.get("XONSH_DEBUG")
-    # FIXME: Under py.test, return 1(?)
+    if XSH.env:
+        return XSH.env.get("XONSH_DEBUG")
+    # FIXME: Under pytest, return 1(?)
     else:
         return 0  # Optimize for speed, not guaranteed correctness
 
@@ -105,7 +106,7 @@ class AbstractEvent(collections.abc.MutableSet, abc.ABC):
 
         Parameters
         ----------
-        **kwargs :
+        **kwargs
             Keyword arguments to pass to each handler
         """
 
@@ -166,7 +167,7 @@ class Event(AbstractEvent):
 
         Parameters
         ----------
-        **kwargs :
+        **kwargs
             Keyword arguments to pass to each handler
 
         Returns
@@ -269,6 +270,21 @@ class EventManager:
     Each event is just an attribute. They're created dynamically on first use.
     """
 
+    def register(self, func):
+        """
+            wraps ``EventManager.doc``
+
+        Parameters
+        ----------
+        func
+            extract name and doc from the function
+        """
+
+        name = func.__name__
+        doc = inspect.getdoc(func)
+        sign = inspect.signature(func)
+        return self.doc(name, f"{name}{sign}\n\n{doc}")
+
     def doc(self, name, docstring):
         """
         Applies a docstring to an event.
@@ -339,6 +355,41 @@ class EventManager:
         setattr(self, name, e)
         # Now it exists, and we won't be called again.
         return e
+
+    def handlers(self, name=None):
+        """
+        Returns a dictionary of all registered events and their handlers.
+        If ``name`` is provided, returns handlers only for that event.
+        """
+        res = {}
+        if name:
+            if hasattr(self, name):
+                val = getattr(self, name)
+                if isinstance(val, AbstractEvent):
+                    res[name] = [
+                        f"{getattr(h, '__module__', 'unknown')}.{getattr(h, '__name__', repr(h))}"
+                        for h in val
+                    ]
+            return res
+
+        for attr_name in dir(self):
+            if attr_name.startswith("_"):
+                continue
+            val = getattr(self, attr_name)
+            if isinstance(val, AbstractEvent):
+                res[attr_name] = [
+                    f"{getattr(h, '__module__', 'unknown')}.{getattr(h, '__name__', repr(h))}"
+                    for h in val
+                ]
+        return res
+
+    def __repr__(self):
+        res = []
+        for name, handlers in self.handlers().items():
+            res.append(f"{name}:")
+            for h in handlers:
+                res.append(f"  - {h}")
+        return "\n".join(res)
 
 
 # Not lazy because:

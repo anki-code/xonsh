@@ -39,7 +39,7 @@ content above into it.
 
 Now we need to tell xonsh to use it as the history backend. To do this
 we need xonsh to be able to find our file and this ``CouchDBHistory`` class.
-Putting the following code into ``~/.xonshrc`` file can achieve this.
+Putting the following code into `xonshrc <xonshrc.rst>`_ file can achieve this.
 
 .. code-block:: none
 
@@ -56,11 +56,11 @@ After starting a new xonsh session, try the following commands:
 
 .. code-block:: none
 
-    $ history info
+    @ history info
     backend: couchdb
     sessionid: 4198d678-1f0a-4ce3-aeb3-6d5517d7fc61
 
-    $ history -n
+    @ history -n
     0: couchdb in action
 
 Woohoo! We just wrote a working history backend!
@@ -77,7 +77,7 @@ After installing, check that it's configured correctly with ``curl``:
 
 .. code-block:: none
 
-    $ curl -i 'http://127.0.0.1:5984/'
+    @ curl -i 'http://127.0.0.1:5984/'
     HTTP/1.1 200 OK
     Cache-Control: must-revalidate
     Content-Length: 91
@@ -235,35 +235,35 @@ Let's start a new xonsh session:
 
 .. code-block:: none
 
-    $ history info
+    @ history info
     backend: couchdb
     sessionid: 1486035364166-3bb78606-dd59-4679
 
-    $ ls
+    @ ls
     Applications   Desktop    Documents    Downloads
 
-    $ echo hi
+    @ echo hi
     hi
 
 Start a second xonsh session:
 
 .. code-block:: none
 
-    $ history info
+    @ history info
     backend: couchdb
     sessionid: 1486035430658-6f81cd5d-b6d4-4f6a
 
-    $ echo new
+    @ echo new
     new
 
-    $ history show all -nt
+    @ history show all -nt
     0:(2017-02-02 19:36) history info
     1:(2017-02-02 19:36) ls
     2:(2017-02-02 19:37) echo hi
     3:(2017-02-02 19:37) history info
     4:(2017-02-02 19:37) echo new
 
-    $ history -nt
+    @ history -nt
     0:(2017-02-02 19:37) history info
     1:(2017-02-02 19:37) echo new
     2:(2017-02-02 19:37) history show all -nt

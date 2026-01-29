@@ -1,25 +1,25 @@
 """Interface for running subprocess-mode commands on posix systems."""
-import os
-import io
-import sys
-import time
-import array
-import signal
-import builtins
-import threading
-import subprocess
 
-import xonsh.lazyasd as xl
+import array
+import io
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+import xonsh.lib.lazyasd as xl
+import xonsh.lib.lazyimps as xli
 import xonsh.platform as xp
 import xonsh.tools as xt
-import xonsh.lazyimps as xli
-
+from xonsh.built_ins import XSH
+from xonsh.procs.jobs import proc_untraced_waitpid
 from xonsh.procs.readers import (
     BufferedFDParallelReader,
     NonBlockingFDReader,
     safe_fdclose,
 )
-
 
 # The following escape codes are xterm codes.
 # See http://rtfm.etla.org/xterm/ctlseq.html for more.
@@ -28,12 +28,12 @@ MODE_NUMS = ("1049", "47", "1047")
 
 @xl.lazyobject
 def START_ALTERNATE_MODE():
-    return frozenset("\x1b[?{0}h".format(i).encode() for i in MODE_NUMS)
+    return frozenset(f"\x1b[?{i}h".encode() for i in MODE_NUMS)
 
 
 @xl.lazyobject
 def END_ALTERNATE_MODE():
-    return frozenset("\x1b[?{0}l".format(i).encode() for i in MODE_NUMS)
+    return frozenset(f"\x1b[?{i}l".encode() for i in MODE_NUMS)
 
 
 @xl.lazyobject
@@ -56,7 +56,7 @@ class PopenThread(threading.Thread):
         self.daemon = True
 
         self.lock = threading.RLock()
-        env = builtins.__xonsh__.env
+        env = XSH.env
         # stdin setup
         self.orig_stdin = stdin
         if stdin is None:
@@ -104,6 +104,14 @@ class PopenThread(threading.Thread):
             raise
 
         self.pid = proc.pid
+        self.name = repr(
+            {
+                "cls": self.__class__.__name__,
+                "name": self.name,
+                "cmd": args,
+                "pid": self.pid,
+            }
+        )
         self.universal_newlines = uninew = proc.universal_newlines
         if uninew:
             self.encoding = enc = env.get("XONSH_ENCODING")
@@ -118,6 +126,8 @@ class PopenThread(threading.Thread):
             self.stderr = io.BytesIO()
         self.suspended = False
         self.prevs_are_closed = False
+        # This is so the thread will use the same swapped values as the origin one.
+        self.original_swapped_values = XSH.env.get_swapped_values()
         self.start()
 
     def run(self):
@@ -125,6 +135,8 @@ class PopenThread(threading.Thread):
         and copying bytes from captured_stdout to stdout and bytes from
         captured_stderr to stderr.
         """
+        # Set the thread-local swapped values.
+        XSH.env.set_swapped_values(self.original_swapped_values)
         proc = self.proc
         spec = self._wait_and_getattr("spec")
         # get stdin and apply parallel reader if needed.
@@ -157,6 +169,16 @@ class PopenThread(threading.Thread):
         # loop over reads while process is running.
         i = j = cnt = 1
         while proc.poll() is None:
+            info = proc_untraced_waitpid(proc, hang=False)
+            if getattr(proc, "suspended", False):
+                self.suspended = True
+                if XSH.env.get("XONSH_DEBUG", False):
+                    procname = f"{getattr(proc, 'args', '')} {proc.pid}".strip()
+                    print(
+                        f"Process {procname} suspended with signal {info['signal_name']}.",
+                        file=sys.stderr,
+                    )
+
             # this is here for CPU performance reasons.
             if i + j == 0:
                 cnt = min(cnt + 1, 1000)
@@ -214,7 +236,7 @@ class PopenThread(threading.Thread):
         if reader is None:
             return 0
         i = -1
-        for i, chunk in enumerate(iter(reader.read_queue, b"")):
+        for i, chunk in enumerate(iter(reader.read_queue, b"")):  # noqa
             self._alt_mode_switch(chunk, writer, stdbuf)
         if i >= 0:
             writer.flush()
@@ -287,7 +309,7 @@ class PopenThread(threading.Thread):
             return
         # Get the terminal size of the real terminal, set it on the
         #       pseudoterminal.
-        buf = array.array("h", [0, 0, 0, 0])
+        buf = array.array("h", [0, 0, 0, 0, 0, 0, 0, 0])
         # 1 = stdout here
         try:
             xli.fcntl.ioctl(1, xli.termios.TIOCGWINSZ, buf, True)
@@ -354,9 +376,9 @@ class PopenThread(threading.Thread):
             return
         try:
             mode = xli.termios.tcgetattr(0)  # only makes sense for stdin
-            mode[xp.CC][
-                xli.termios.VSUSP
-            ] = self._tc_cc_vsusp  # set ^Z (ie SIGSTOP) to original
+            mode[xp.CC][xli.termios.VSUSP] = (
+                self._tc_cc_vsusp
+            )  # set ^Z (ie SIGSTOP) to original
             # this usually doesn't work in interactive mode,
             # but we should try it anyway.
             xli.termios.tcsetattr(0, xli.termios.TCSANOW, mode)

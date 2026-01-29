@@ -1,20 +1,20 @@
 """Command pipeline tools."""
+
+import io
 import os
 import re
-import io
-import sys
-import time
 import signal
-import builtins
-import threading
 import subprocess
+import sys
+import threading
+import time
 
-import xonsh.lazyasd as xl
-import xonsh.tools as xt
+import xonsh.lib.lazyasd as xl
 import xonsh.platform as xp
-import xonsh.jobs as xj
-
-from xonsh.procs.readers import NonBlockingFDReader, ConsoleParallelReader, safe_fdclose
+import xonsh.procs.jobs as xj
+import xonsh.tools as xt
+from xonsh.built_ins import XSH
+from xonsh.procs.readers import ConsoleParallelReader, NonBlockingFDReader, safe_fdclose
 
 
 @xl.lazyobject
@@ -24,18 +24,18 @@ def STDOUT_CAPTURE_KINDS():
 
 @xl.lazyobject
 def RE_HIDDEN_BYTES():
-    return re.compile(b"(\001.*?\002)")
+    return re.compile("(\001.*?\002)")
 
 
 @xl.lazyobject
 def RE_VT100_ESCAPE():
-    return re.compile(b"(\x9B|\x1B\\[)[0-?]*[ -\\/]*[@-~]")
+    return re.compile("(\u009b|\u001b\\[)[0-?]*[ -\\/]*[@-~]")
 
 
 @xl.lazyobject
 def RE_HIDE_ESCAPE():
     return re.compile(
-        b"(" + RE_HIDDEN_BYTES.pattern + b"|" + RE_VT100_ESCAPE.pattern + b")"
+        "(" + RE_HIDDEN_BYTES.pattern + "|" + RE_VT100_ESCAPE.pattern + ")"
     )
 
 
@@ -62,6 +62,8 @@ def SIGNAL_MESSAGES():
 
 def safe_readlines(handle, hint=-1):
     """Attempts to read lines without throwing an error."""
+    if handle is None:
+        return []
     try:
         lines = handle.readlines(hint)
     except OSError:
@@ -78,14 +80,14 @@ def safe_readable(handle):
     return status
 
 
-def update_fg_process_group(pipeline_group, background):
-    if background:
-        return False
+def update_process_group(pipeline_group, background):
     if not xp.ON_POSIX:
         return False
-    env = builtins.__xonsh__.env
+    env = XSH.env
     if not env.get("XONSH_INTERACTIVE"):
         return False
+    if background:
+        return True
     return xj.give_terminal_to(pipeline_group)
 
 
@@ -93,21 +95,25 @@ class CommandPipeline:
     """Represents a subprocess-mode command pipeline."""
 
     attrnames = (
-        "stdin",
-        "stdout",
-        "stderr",
-        "pid",
         "returncode",
+        "suspended",
+        "pid",
         "args",
         "alias",
-        "stdin_redirect",
-        "stdout_redirect",
-        "stderr_redirect",
-        "timestamps",
         "executed_cmd",
+        "timestamps",
         "input",
         "output",
         "errors",
+    )
+
+    attrnames_ext = (
+        "stdin",
+        "stdout",
+        "stderr",
+        "stdin_redirect",
+        "stdout_redirect",
+        "stderr_redirect",
     )
 
     nonblocking = (io.BytesIO, NonBlockingFDReader, ConsoleParallelReader)
@@ -150,10 +156,21 @@ class CommandPipeline:
         self._raw_output = self._raw_error = b""
         self._stderr_prefix = self._stderr_postfix = None
         self.term_pgid = None
+        self.suspended = None
+        self.output_format = self.spec.output_format
 
         background = self.spec.background
         pipeline_group = None
-        for spec in specs:
+        if xp.ON_POSIX and not xt.on_main_thread():
+            # If we are inside a ProcProxyThread, then run commands in the same
+            # process group as xonsh. This fixes case 2 of issue #4277, where
+            # the terminal is given to a command inside the ProcProxyThread,
+            # taking the terminal away from the `less` command, causing `less`
+            # to stop.
+            pipeline_group = os.getpgid(0)
+        for i, spec in enumerate(specs):
+            for mod in spec.decorators:
+                mod.decorate_spec_pre_run(self, spec, i)
             if self.starttime is None:
                 self.starttime = time.time()
             try:
@@ -170,22 +187,47 @@ class CommandPipeline:
                 and self.captured != "object"
             ):
                 pipeline_group = proc.pid
-                if update_fg_process_group(pipeline_group, background):
+                if update_process_group(pipeline_group, background):
                     self.term_pgid = pipeline_group
             self.procs.append(proc)
         self.proc = self.procs[-1]
 
     def __repr__(self):
+        debug = XSH.env.get("XONSH_DEBUG", False)
+        attrs = self.attrnames + (self.attrnames_ext if debug else ())
         s = self.__class__.__name__ + "(\n  "
-        s += ",\n  ".join(a + "=" + repr(getattr(self, a)) for a in self.attrnames)
+        s += ",\n  ".join(
+            a + "=" + repr(getattr(self, a))
+            for a in attrs
+            if debug or getattr(self, a) is not None
+        )
         s += "\n)"
         return s
 
     def __bool__(self):
         return self.returncode == 0
 
+    def __int__(self):
+        return self.returncode
+
+    def __hash__(self):
+        return hash(self.returncode)
+
+    def __str__(self):
+        self.end()
+        return self.output
+
     def __len__(self):
         return len(self.procs)
+
+    def __eq__(self, other):
+        if isinstance(other, int):
+            return self.returncode == other
+        elif isinstance(other, str):
+            return str(self) == other
+        raise Exception(
+            f"CommandPipeline doesn't support comparing with {type(other)}."
+        )
 
     def __iter__(self):
         """Iterates through stdout and returns the lines, converting to
@@ -205,7 +247,7 @@ class CommandPipeline:
         proc = self.proc
         if proc is None:
             return
-        timeout = builtins.__xonsh__.env.get("XONSH_PROC_FREQUENCY")
+        timeout = XSH.env.get("XONSH_PROC_FREQUENCY")
         # get the correct stdout
         stdout = proc.stdout
         if (
@@ -225,7 +267,10 @@ class CommandPipeline:
             # we get here if the process is not threadable or the
             # class is the real Popen
             PrevProcCloser(pipeline=self)
-            task = xj.wait_for_active_job()
+            task = None
+            if not isinstance(sys.exc_info()[1], SystemExit):
+                task = xj.wait_for_active_job()
+
             if task is None or task["status"] != "stopped":
                 proc.wait()
                 self._endtime()
@@ -236,7 +281,7 @@ class CommandPipeline:
                     lines = b.splitlines(keepends=True)
                     yield from lines
                     self.end(tee_output=False)
-                elif self.captured == "stdout":
+                elif self.captured == "stdout" and stdout is not None:
                     b = stdout.read()
                     s = self._decode_uninew(b, universal_newlines=True)
                     self.lines = s.splitlines(keepends=True)
@@ -256,7 +301,9 @@ class CommandPipeline:
         prev_end_time = None
         i = j = cnt = 1
         while proc.poll() is None:
-            if getattr(proc, "suspended", False):
+            if getattr(proc, "suspended", False) or self._procs_suspended() is not None:
+                self.suspended = True
+                xj.update_job_attr(proc.pid, "status", "suspended")
                 return
             elif getattr(proc, "in_alt_mode", False):
                 time.sleep(0.1)  # probably not leaving any time soon
@@ -271,6 +318,7 @@ class CommandPipeline:
                 self._close_prev_procs()
                 proc.prevs_are_closed = True
                 break
+
             stdout_lines = safe_readlines(stdout, 1024)
             i = len(stdout_lines)
             if i != 0:
@@ -328,7 +376,7 @@ class CommandPipeline:
         yields each line. This may optionally accept lines (in bytes) to iterate
         over, in which case it does not call iterraw().
         """
-        env = builtins.__xonsh__.env
+        env = XSH.env
         enc = env.get("XONSH_ENCODING")
         err = env.get("XONSH_ENCODING_ERRORS")
         lines = self.lines
@@ -355,8 +403,8 @@ class CommandPipeline:
                 line = line[:-2] + nl
             elif line.endswith(cr):
                 line = line[:-1] + nl
-            line = RE_HIDE_ESCAPE.sub(b"", line)
             line = line.decode(encoding=enc, errors=err)
+            line = RE_HIDE_ESCAPE.sub("", line)
             # tee it up!
             lines.append(line)
             yield line
@@ -368,7 +416,7 @@ class CommandPipeline:
         """Streams lines to sys.stderr and the errors attribute."""
         if not lines:
             return
-        env = builtins.__xonsh__.env
+        env = XSH.env
         enc = env.get("XONSH_ENCODING")
         err = env.get("XONSH_ENCODING_ERRORS")
         b = b"".join(lines)
@@ -377,21 +425,25 @@ class CommandPipeline:
         if self.stderr_postfix:
             b += self.stderr_postfix
         stderr_has_buffer = hasattr(sys.stderr, "buffer")
-        # write bytes to std stream
-        if stderr_has_buffer:
-            sys.stderr.buffer.write(b)
-        else:
-            sys.stderr.write(b.decode(encoding=enc, errors=err))
-        sys.stderr.flush()
+        show_stderr = self.captured != "object" or env.get(
+            "XONSH_SUBPROC_CAPTURED_PRINT_STDERR", True
+        )
+        if show_stderr:
+            # write bytes to std stream
+            if stderr_has_buffer:
+                sys.stderr.buffer.write(b)
+            else:
+                sys.stderr.write(b.decode(encoding=enc, errors=err))
+            sys.stderr.flush()
         # save the raw bytes
         self._raw_error = b
         # do some munging of the line before we save it to the attr
         b = b.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-        b = RE_HIDE_ESCAPE.sub(b"", b)
-        env = builtins.__xonsh__.env
+        env = XSH.env
         s = b.decode(
             encoding=env.get("XONSH_ENCODING"), errors=env.get("XONSH_ENCODING_ERRORS")
         )
+        s = RE_HIDE_ESCAPE.sub("", s)
         # set the errors
         if self.errors is None:
             self.errors = s
@@ -402,8 +454,8 @@ class CommandPipeline:
         """Decode bytes into a str and apply universal newlines as needed."""
         if not b:
             return ""
-        if isinstance(b, bytes):
-            env = builtins.__xonsh__.env
+        if isinstance(b, bytes | bytearray):
+            env = XSH.env
             s = b.decode(
                 encoding=env.get("XONSH_ENCODING"),
                 errors=env.get("XONSH_ENCODING_ERRORS"),
@@ -455,12 +507,12 @@ class CommandPipeline:
             return
         if xj.give_terminal_to(pgid):  # if gave term succeed
             self.term_pgid = pgid
-            if builtins.__xonsh__.shell is not None:
+            if XSH.shell is not None:
                 # restoring sanity could probably be called whenever we return
                 # control to the shell. But it only seems to matter after a
                 # ^Z event. This *has* to be called after we give the terminal
                 # back to the shell.
-                builtins.__xonsh__.shell.shell.restore_tty_sanity()
+                XSH.shell.shell.restore_tty_sanity()
 
     def resume(self, job, tee_output=True):
         self.ended = False
@@ -477,12 +529,26 @@ class CommandPipeline:
     def _safe_close(self, handle):
         safe_fdclose(handle, cache=self._closed_handle_cache)
 
+    def _procs_suspended(self):
+        """Check procs and return suspended proc."""
+        for proc in self.procs:
+            info = xj.proc_untraced_waitpid(proc, hang=False)
+            if getattr(proc, "suspended", False):
+                proc = getattr(proc, "proc", proc)
+                procname = f"{getattr(proc, 'args', '')} with pid {proc.pid}".strip()
+                print(
+                    f"Process {procname} was suspended with signal {info['signal_name']} and placed in `jobs`.\n"
+                    f"This happens when a process starts waiting for input but there is no terminal attached in captured mode.",
+                    file=sys.stderr,
+                )
+                return proc
+
     def _prev_procs_done(self):
         """Boolean for if all previous processes have completed. If there
         is only a single process in the pipeline, this returns False.
         """
         any_running = False
-        for s, p in zip(self.specs[:-1], self.procs[:-1]):
+        for s, p in zip(self.specs[:-1], self.procs[:-1], strict=False):
             if p.poll() is None:
                 any_running = True
                 continue
@@ -498,7 +564,7 @@ class CommandPipeline:
 
     def _close_prev_procs(self):
         """Closes all but the last proc's stdout."""
-        for s, p in zip(self.specs[:-1], self.procs[:-1]):
+        for s, p in zip(self.specs[:-1], self.procs[:-1], strict=False):
             self._safe_close(s.stdin)
             self._safe_close(s.stdout)
             self._safe_close(s.stderr)
@@ -557,7 +623,7 @@ class CommandPipeline:
 
     def _apply_to_history(self):
         """Applies the results to the current history object."""
-        hist = builtins.__xonsh__.history
+        hist = XSH.history
         if hist is not None:
             hist.last_cmd_rtn = 1 if self.proc is None else self.proc.returncode
 
@@ -565,11 +631,17 @@ class CommandPipeline:
         """Raises a subprocess error, if we are supposed to."""
         spec = self.spec
         rtn = self.returncode
-        if (
-            rtn is not None
-            and rtn != 0
-            and builtins.__xonsh__.env.get("RAISE_SUBPROC_ERROR")
-        ):
+
+        if rtn is None or rtn == 0:
+            return
+
+        raise_subproc_error = spec.raise_subproc_error
+        if callable(raise_subproc_error):
+            raise_subproc_error = raise_subproc_error(spec, self)
+        if raise_subproc_error is False:
+            return
+
+        if raise_subproc_error or XSH.env.get("RAISE_SUBPROC_ERROR", True):
             try:
                 raise subprocess.CalledProcessError(rtn, spec.args, output=self.output)
             finally:
@@ -600,15 +672,33 @@ class CommandPipeline:
         """Creates normalized input string from args."""
         return " ".join(self.args)
 
+    def get_formatted_lines(self, lines):
+        """Format output lines."""
+        fmt = self.output_format
+        if fmt == "stream_lines":
+            if len(lines) == 1:
+                return lines[0].rstrip("\n")
+            else:
+                return "".join(lines)
+        elif fmt == "list_lines":
+            if not lines:
+                return lines
+            elif len(lines) == 1:
+                return [lines[0].rstrip("\n")]
+            else:
+                return [line.rstrip("\n") for line in lines]
+        elif callable(fmt):
+            return fmt(lines)
+
     @property
     def output(self):
         """Non-blocking, lazy access to output"""
         if self.ended:
             if self._output is None:
-                self._output = "".join(self.lines)
+                self._output = self.get_formatted_lines(self.lines)
             return self._output
         else:
-            return "".join(self.lines)
+            return self.get_formatted_lines(self.lines)
 
     @property
     def out(self):
@@ -637,7 +727,7 @@ class CommandPipeline:
     @property
     def pid(self):
         """Process identifier."""
-        return self.proc.pid
+        return self.proc.pid if self.proc else None
 
     @property
     def returncode(self):
@@ -701,7 +791,7 @@ class CommandPipeline:
         """Prefix to print in front of stderr, as bytes."""
         p = self._stderr_prefix
         if p is None:
-            env = builtins.__xonsh__.env
+            env = XSH.env
             t = env.get("XONSH_STDERR_PREFIX")
             s = xt.format_std_prepost(t, env=env)
             p = s.encode(
@@ -716,7 +806,7 @@ class CommandPipeline:
         """Postfix to print after stderr, as bytes."""
         p = self._stderr_postfix
         if p is None:
-            env = builtins.__xonsh__.env
+            env = XSH.env
             t = env.get("XONSH_STDERR_POSTFIX")
             s = xt.format_std_prepost(t, env=env)
             p = s.encode(
@@ -732,17 +822,8 @@ class HiddenCommandPipeline(CommandPipeline):
         return ""
 
 
-def pause_call_resume(p, f, *args, **kwargs):
-    """For a process p, this will call a function f with the remaining args and
-    and kwargs. If the process cannot accept signals, the function will be called.
-
-    Parameters
-    ----------
-    p : Popen object or similar
-    f : callable
-    args : remaining arguments
-    kwargs : keyword arguments
-    """
+def resume_process(p):
+    """Sends SIGCONT to a process if possible."""
     can_send_signal = (
         hasattr(p, "send_signal")
         and xp.ON_POSIX
@@ -751,15 +832,9 @@ def pause_call_resume(p, f, *args, **kwargs):
     )
     if can_send_signal:
         try:
-            p.send_signal(signal.SIGSTOP)
+            p.send_signal(signal.SIGCONT)
         except PermissionError:
             pass
-    try:
-        f(*args, **kwargs)
-    except Exception:
-        pass
-    if can_send_signal:
-        p.send_signal(signal.SIGCONT)
 
 
 class PrevProcCloser(threading.Thread):
@@ -788,7 +863,7 @@ class PrevProcCloser(threading.Thread):
             return
         proc = pipeline.proc
         prev_end_time = None
-        timeout = builtins.__xonsh__.env.get("XONSH_PROC_FREQUENCY")
+        timeout = XSH.env.get("XONSH_PROC_FREQUENCY")
         sleeptime = min(timeout * 1000, 0.1)
         while proc.poll() is None:
             if not check_prev_done:

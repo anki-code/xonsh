@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """Implements the xonsh parser for Python v3.6."""
-import xonsh.ast as ast
-from xonsh.parsers.base import store_ctx, lopen_loc, BaseParser
+
+import xonsh.parsers.ast as ast
+from xonsh.parsers.base import BaseParser, lopen_loc, store_ctx
 
 
 class Parser(BaseParser):
@@ -9,8 +9,6 @@ class Parser(BaseParser):
 
     def __init__(
         self,
-        lexer_optimize=True,
-        lexer_table="xonsh.lexer_table",
         yacc_optimize=True,
         yacc_table="xonsh.parser_table",
         yacc_debug=False,
@@ -19,10 +17,6 @@ class Parser(BaseParser):
         """
         Parameters
         ----------
-        lexer_optimize : bool, optional
-            Set to false when unstable and true when lexer is stable.
-        lexer_table : str, optional
-            Lexer module used when optimized.
         yacc_optimize : bool, optional
             Set to false when unstable and true when parser is stable.
         yacc_table : str, optional
@@ -37,8 +31,6 @@ class Parser(BaseParser):
         for rule in tok_rules:
             self._tok_rule(rule)
         super().__init__(
-            lexer_optimize=lexer_optimize,
-            lexer_table=lexer_table,
             yacc_optimize=yacc_optimize,
             yacc_table=yacc_table,
             yacc_debug=yacc_debug,
@@ -162,17 +154,21 @@ class Parser(BaseParser):
         p[0]["comps"][0].is_async = 0
 
     def p_expr_stmt_annassign(self, p):
-        """expr_stmt : testlist_star_expr COLON test EQUALS test"""
+        """expr_stmt : testlist_star_expr COLON test EQUALS test
+        | testlist_star_expr COLON test
+        """
         p1 = p[1][0]
         lineno, col = lopen_loc(p1)
-        if len(p[1]) > 1 or not isinstance(p1, ast.Name):
+        if len(p[1]) > 1 or not isinstance(
+            p1, ast.Name | ast.Attribute | ast.Subscript
+        ):
             loc = self.currloc(lineno, col)
             self._set_error("only single target can be annotated", loc)
         store_ctx(p1)
         p[0] = ast.AnnAssign(
             target=p1,
             annotation=p[3],
-            value=p[5],
+            value=p[5] if len(p) >= 6 else None,
             simple=1,
             lineno=lineno,
             col_offset=col,

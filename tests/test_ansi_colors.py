@@ -1,15 +1,15 @@
 """Tests ANSI color tools."""
+
 import pytest
 
 from xonsh.ansi_colors import (
     ansi_color_escape_code_to_name,
-    ansi_reverse_style,
     ansi_color_name_to_escape_code,
     ansi_color_style_names,
+    ansi_reverse_style,
     ansi_style_by_name,
     register_custom_ansi_style,
 )
-
 
 DEFAULT_CMAP = {
     # Reset
@@ -140,6 +140,20 @@ def test_ansi_color_escape_code_to_name(inp, exp):
 def test_ansi_color_name_to_escape_code_for_all_styles(color, style):
     escape_code = ansi_color_name_to_escape_code(color, style)
     assert len(escape_code) > 0
+
+
+@pytest.mark.parametrize(
+    "style_name",
+    [
+        ("default"),
+        ("monokai"),  # defined in `ansi_colors.py`
+        ("rainbow_dash"),  # not in `ansi_colors.py`, but in pygments
+        ("foobar"),  # invalid, should not fail
+    ],
+)
+def test_ansi_style_by_name(style_name):
+    style = ansi_style_by_name(style_name)
+    assert style is not None
 
 
 @pytest.mark.parametrize(

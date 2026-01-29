@@ -5,10 +5,11 @@ color codes. Parts of this file were originally forked from Micah Elliott
 http://MicahElliott.com Copyright (C) 2011 Micah Elliott. All rights reserved.
 WTFPL http://sam.zoy.org/wtfpl/
 """
-import re
-import math
 
-from xonsh.lazyasd import lazyobject, LazyObject
+import math
+import re
+
+from xonsh.lib.lazyasd import LazyObject, lazyobject
 from xonsh.tools import print_warning
 
 _NO_COLOR_WARNING_SHOWN = False
@@ -16,6 +17,16 @@ _NO_COLOR_WARNING_SHOWN = False
 RE_BACKGROUND = LazyObject(
     lambda: re.compile("(BG#|BGHEX|BACKGROUND)"), globals(), "RE_BACKGROUND"
 )
+
+
+class COLORS:
+    """constants"""
+
+    RESET = "{RESET}"
+    RED = "{RED}"
+    GREEN = "{GREEN}"
+    BOLD_RED = "{BOLD_RED}"
+    BOLD_GREEN = "{BOLD_GREEN}"
 
 
 @lazyobject
@@ -83,12 +94,7 @@ def RE_XONSH_COLOR():
         r"INTENSE_RED|INTENSE_GREEN|INTENSE_YELLOW|INTENSE_BLUE|INTENSE_PURPLE|"
         r"INTENSE_CYAN|INTENSE_WHITE|#" + hex + "{3}|#" + hex + "{6}|DEFAULT)"
     )
-    bghex = (
-        "bg#" + hex + "{3}|"
-        "bg#" + hex + "{6}|"
-        "BG#" + hex + "{3}|"
-        "BG#" + hex + "{6}"
-    )
+    bghex = "bg#" + hex + "{3}|bg#" + hex + "{6}|BG#" + hex + "{3}|BG#" + hex + "{6}"
     s = "^((?P<reset>RESET|NO_COLOR)|(?P<bghex>" + bghex + ")|" + s + ")$"
     return re.compile(s)
 
@@ -434,7 +440,7 @@ def rgb_to_256(rgb):
                 res.append(closest)
                 break
             i += 1
-    res = "".join([("%02.x" % i) for i in res])
+    res = "".join([f"{i:02x}" for i in res])
     equiv = RGB_TO_SHORT[res]
     return equiv, res
 
@@ -454,9 +460,9 @@ def RE_RGB6():
 
 def rgb_to_ints(rgb):
     if len(rgb) == 6:
-        return tuple([int(h, 16) for h in RE_RGB6.split(rgb)[1:4]])
+        return tuple(int(h, 16) for h in RE_RGB6.split(rgb)[1:4])
     else:
-        return tuple([int(h * 2, 16) for h in RE_RGB3.split(rgb)[1:4]])
+        return tuple(int(h * 2, 16) for h in RE_RGB3.split(rgb)[1:4])
 
 
 def short_to_ints(short):
@@ -464,12 +470,14 @@ def short_to_ints(short):
     return rgb_to_ints(short2rgb(short))
 
 
-def color_dist(x, y):
+def color_dist(x, y) -> float:
     return math.sqrt((x[0] - y[0]) ** 2 + (x[1] - y[1]) ** 2 + (x[2] - y[2]) ** 2)
 
 
 def find_closest_color(x, palette):
-    return min(sorted(palette.keys())[::-1], key=lambda k: color_dist(x, palette[k]))
+    return min(
+        sorted(palette.keys(), reverse=True), key=lambda k: color_dist(x, palette[k])
+    )
 
 
 def make_palette(strings):

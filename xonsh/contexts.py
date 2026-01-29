@@ -1,11 +1,13 @@
 """Context management tools for xonsh."""
+
 import sys
 import textwrap
-import builtins
 from collections.abc import Mapping
 
+from xonsh.built_ins import XSH
 
-class Block(object):
+
+class Block:
     """This is a context manager for obtaining a block of lines without actually
     executing the block. The lines are accessible as the 'lines' attribute.
     This must be used as a macro.
@@ -28,7 +30,9 @@ class Block(object):
 
     def __enter__(self):
         if not hasattr(self, "macro_block"):
-            raise XonshError(self.__class__.__name__ + " must be entered as a macro!")
+            raise XSH.builtins.XonshError(
+                self.__class__.__name__ + " must be entered as a macro!"
+            )
         self.lines = self.macro_block.splitlines()
         self.glbs = self.macro_globals
         if self.macro_locals is not self.macro_globals:
@@ -77,7 +81,7 @@ class Functor(Block):
         super().__enter__()
         body = textwrap.indent(self.macro_block, "    ")
         uid = hash(body) + sys.maxsize  # should always be a positive int
-        name = "__xonsh_functor_{uid}__".format(uid=uid)
+        name = f"__xonsh_functor_{uid}__"
         # construct signature string
         sig = rtn = ""
         sig = ", ".join(self.args)
@@ -93,7 +97,7 @@ class Functor(Block):
         fstr = fstr.format(name=name, sig=sig, body=body, rtn=rtn)
         glbs = self.glbs
         locs = self.locs
-        execer = builtins.__xonsh__.execer
+        execer = XSH.execer
         execer.exec(fstr, glbs=glbs, locs=locs)
         if locs is not None and name in locs:
             func = locs[name]

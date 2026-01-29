@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 # Copyright (c) 2002-2007 ActiveState Software Inc.
 
+import collections.abc as cabc
+import getopt
+
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the
 # "Software"), to deal in the Software without restriction, including
@@ -25,11 +28,10 @@
 # Home:
 #   http://trentm.com/projects/which/
 import os
-import sys
 import stat
-import getopt
-import builtins
-import collections.abc as cabc
+import sys
+
+from xonsh.built_ins import XSH
 
 r"""Find the full path to commands.
 
@@ -143,15 +145,15 @@ def _cull(potential, matches, verbose=0):
     for match in matches:  # don't yield duplicates
         if _samefile(potential[0], match[0]):
             if verbose:
-                sys.stderr.write("duplicate: %s (%s)\n" % potential)
+                sys.stderr.write("duplicate: {} ({})\n".format(*potential))
             return None
     else:
         if not stat.S_ISREG(os.stat(potential[0]).st_mode):
             if verbose:
-                sys.stderr.write("not a regular file: %s (%s)\n" % potential)
+                sys.stderr.write("not a regular file: {} ({})\n".format(*potential))
         elif sys.platform != "win32" and not os.access(potential[0], os.X_OK):
             if verbose:
-                sys.stderr.write("no executable access: %s (%s)\n" % potential)
+                sys.stderr.write("no executable access: {} ({})\n".format(*potential))
         else:
             matches.append(potential)
             return potential
@@ -191,7 +193,7 @@ def whichgen(command, path=None, verbose=0, exts=None):
     # Windows has the concept of a list of extensions (PATHEXT env var).
     if sys.platform.startswith("win"):
         if exts is None:
-            exts = builtins.__xonsh__.env["PATHEXT"]
+            exts = XSH.env["PATHEXT"]
             # If '.exe' is not in exts then obviously this is Win9x and
             # or a bogus PATHEXT, then use a reasonable default.
             for ext in exts:
@@ -204,7 +206,7 @@ def whichgen(command, path=None, verbose=0, exts=None):
     else:
         if exts is not None:
             raise WhichError(
-                "'exts' argument is not supported on " "platform '%s'" % sys.platform
+                f"'exts' argument is not supported on platform {sys.platform!r}"
             )
         exts = []
 
@@ -213,7 +215,8 @@ def whichgen(command, path=None, verbose=0, exts=None):
     if os.sep in command or os.altsep and os.altsep in command:
         if os.path.exists(command):
             match = _cull((command, "explicit path given"), matches, verbose)
-            yield match
+            if match:
+                yield match
     else:
         for i in range(len(path)):
             dirName = path[i]
@@ -268,8 +271,8 @@ def which(command, path=None, verbose=0, exts=None):
     """
     try:
         absName, fromWhere = next(whichgen(command, path, verbose, exts))
-    except StopIteration:
-        raise WhichError("Could not find '%s' on the path." % command)
+    except StopIteration as ex:
+        raise WhichError(f"Could not find {command!r} on the path.") from ex
     if verbose:
         return absName, fromWhere
     else:
@@ -322,7 +325,7 @@ def main(argv):
             print(_cmdlnUsage)
             return 0
         elif opt in ("-V", "--version"):
-            print("which %s" % __version__)
+            print(f"which {__version__}")
             return 0
         elif opt in ("-a", "--all"):
             all = 1

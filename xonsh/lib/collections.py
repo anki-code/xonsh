@@ -1,13 +1,12 @@
 """Base class for chaining DBs"""
 
 import itertools
-
+import typing as tp
 from collections import ChainMap
 from collections.abc import MutableMapping, MutableSequence, MutableSet
-import typing as tp
 
 
-class ChainDBDefaultType(object):
+class ChainDBDefaultType:
     """Singleton for representing when no default value is given."""
 
     __inst: tp.Optional["ChainDBDefaultType"] = None
@@ -39,7 +38,7 @@ class ChainDB(ChainMap):
                 else:
                     res.maps.append(result)
         elif all(
-            [isinstance(result, (MutableSequence, MutableSet)) for result in results]
+            [isinstance(result, MutableSequence | MutableSet) for result in results]
         ):
             results_chain = itertools.chain(*results)
             # if all reults have the same type, cast into that type
@@ -51,7 +50,7 @@ class ChainDB(ChainMap):
             for result in reversed(results):
                 if result is not ChainDBDefault:
                     return result
-            raise KeyError("{} is none of the current mappings".format(key))
+            raise KeyError(f"{key} is none of the current mappings")
         return res
 
     def __setitem__(self, key, value):
@@ -65,7 +64,7 @@ class ChainDB(ChainMap):
 
 
 def _convert_to_dict(cm):
-    if isinstance(cm, (ChainMap, ChainDB)):
+    if isinstance(cm, ChainMap | ChainDB):
         r = {}
         for k, v in cm.items():
             r[k] = _convert_to_dict(v)

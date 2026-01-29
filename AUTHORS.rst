@@ -6,29 +6,32 @@ Authors are sorted by number of commits.
 * Gil Forsyth
 * Morten Enemark Lund
 * Konstantinos Tsakiltzidis
+* Noortheen Raja
 * Jamie Bliss
 * a
 * Hugo Wang
 * David Strobach
 * Bob Hyman
-* BlahGeek
 * anki-code
+* BlahGeek
+* pre-commit-ci[bot]
+* Daniel Shimon
 * Gyuri Horak
 * Jean-Benoist Leger
 * christopher
-* Noortheen Raja
 * Klaus Alexander Seistrup
 * Leonardo Santagada
 * Burak Yiğit Kaya
 * Matthias Bussonnier
 * Aaron Griffin
+* Peter Ye
 * Rob Brewer
 * virus
 * Sagar Tewari
+* Gordon Ball
 * Eadaen1
 * Konstantin Molchanov
 * Guillaume Leclerc
-* Gordon Ball
 * Travis Shirk
 * Carmen Bianca Bakker
 * Danny Sepler
@@ -41,10 +44,11 @@ Authors are sorted by number of commits.
 * VHarisop
 * JohnLunzer
 * Paul Goelz
-* Daniel Shimon
+* Jason R. Coombs
+* cryzed
 * Frank Sachsenheim
 * Kurtis Rader
-* cryzed
+* Evgeny
 * Brian Visel
 * cafehaine
 * Andrew Hundt
@@ -52,9 +56,10 @@ Authors are sorted by number of commits.
 * Justin Moen
 * Raphael Das Gupta
 * Caleb Hattingh
-* Jason R. Coombs
 * Stephan Fitzpatrick
+* dev2718
 * Will S
+* dependabot[bot]
 * K.-Michael Aye
 * halloleo
 * Will Wykeham
@@ -64,9 +69,10 @@ Authors are sorted by number of commits.
 * Alessio Bogon
 * Yohei Tamura
 * Maximilian Köhl
+* Alexander Sosedkin
+* doronz88
 * Cody Scott
 * Jake Hedman
-* Alexander Sosedkin
 * traverseda
 * Andre Weltsch
 * Jeremy Donahue
@@ -75,6 +81,8 @@ Authors are sorted by number of commits.
 * mel
 * Jared Crawford
 * Mike Crowe
+* Vasilis Gerakaris
+* Angus Hollands
 * JuanPablo
 * Ollie Terrance
 * Marcel Bollmann
@@ -118,6 +126,8 @@ Authors are sorted by number of commits.
 * Sean Farley
 * Marduk Bolaños
 * Marius van Niekerk
+* Stefano Rivera
+* Lie Ryan
 * Jan Schulz
 * Samuel Dion-Girardeau
 * Michael Droettboom
@@ -129,14 +139,23 @@ Authors are sorted by number of commits.
 * yuqing
 * Rahiel Kasim
 * SanketDG
+* Mark Bestley
 * David
 * Danmou
 * Niklas Hambüchen
 * Sébastien Pierre
+* Eddie Peters
 * shadow-light
 * Jan Chren
 * Samuel Lotz
 * Jerzy Drozdz
+* omjadas
+* Jeremy Schlatter
+* Samuel Dion-Girardeau
+* Oliver Bestwalter
+* Ivan Ogasawara
+* jfmontanaro
+* Łukasz Langa
 * Mark Wiebe
 * Nathan Hoad
 * Eric Dill
@@ -151,14 +170,12 @@ Authors are sorted by number of commits.
 * Nicolas Avrutin
 * Kevin Yokley
 * Ollie Ford
-* Mark Bestley
 * Michał Zając
 * Emre Ates
 * Romain Bignon
 * Owen Campbell
 * Steven Kryskalla
 * cclauss
-* Eddie Peters
 * Ke Zhang
 * László Vaskó
 * Allan Crooks
@@ -169,6 +186,13 @@ Authors are sorted by number of commits.
 * anki
 * Faris A Chugthai
 * Asaf Fisher
+* Gabriele N. Tornetta
+* cmidkiff87
+* jbw3
+* Naveen
+* Blake Ramsdell
+* JamesParrott
+* jyn
 * Dan Allan
 * Ned Letcher
 * Zach Crownover
@@ -241,7 +265,6 @@ Authors are sorted by number of commits.
 * Wendell CTR Turner
 * Will Shanks
 * Dominic Ward
-* omjadas
 * Leandro Emmanuel Reina Kiperman
 * Henré Botha
 * Aneesh Durg
@@ -249,8 +272,76 @@ Authors are sorted by number of commits.
 * yggdr
 * Gao, Xiang
 * Tejasvi S Tomar
-* Evgeny
 * Adam Schwalm
 * Nate Simon
+* jmoranos
+* Walter A. Boring IV
+* bhawkins
+* JackofSpades707
+* Luiz Antonio Lazoti
+* francium
+* FranzAtGithub
+* IJR222
+* Shanmukha Vishnu
+* Ali Uneri
+* Eleni E
+* Kaarel Pärtel
+* Michael Ramsey
+* circuit10
+* Ryan Delaney
+* E Pluribus Unum
+* ylmrx
+* Hierosme
+* Kyllingene
+* zzj
+* Daniel
+* Ganer
+* mattmc3
+* Evan Hubinger
+* Italo Cunha
+* Timmy Welch
+* Hannes Römer
+* jgart
+* Michael Panitz (at Cascadia College)
+* Tim Gates
+* amukher3
+* Ashish Kurmi
+* Justin
+* yotamolenik
+* austin-yang
+* Marco Rubin
+* Qyriad
+* Tobias Becker
+* AkshayWarrier
+* Thomas Hess
+* kouhe3
+* HackTheOxidation
+* Cosine Chen
+* mgunyho
+* ShalokShalom
+* Wilfried Pollan
+* Jacqueline Leykam
+* Joshix-1
+* Nathan Monfils
+* Airat Makhmutov
+* Matthieu LAURENT
+* Daniel Saunders
+* Andrew
+* l-no
+* amacfie-tc
+* lunrenyi
+* Spencer Bliven
+* Niraj Kulkarni
+* Aidan Courtney
+* Max Nordlund
+* Shawn Wallace
+* Faidon Liambotis
+* Jueun Lee
+* Simon Billinge
+* Bala
+* Artur Manuel
+* Đỗ Trung Nguyên
+* Ahmed
 * goodboy
 * Atsushi Morimoto
+* slacksystem
