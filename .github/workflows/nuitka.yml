@@ -68,6 +68,8 @@ jobs:
                   --include-package=pygments \
                   --include-package=prompt_toolkit \
                   --include-module=pyperclip \
+                  --include-module=ctypes \
+                  --include-package=ctypes \
                   /opt/hostedtoolcache/Python/3.11.14/x64/lib/python$PYTHON_VER/site-packages/xonsh
 
       - name: nuitka-crash-report.xml
