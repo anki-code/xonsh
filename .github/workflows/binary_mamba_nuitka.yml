@@ -1,4 +1,4 @@
-name: Build Mamba+Nuitka
+name: Build xonsh bin on Mamba+Nuitka
 
 on:
   release:

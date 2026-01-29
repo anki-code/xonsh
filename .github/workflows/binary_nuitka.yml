@@ -1,4 +1,4 @@
-name: Build xonsh binary using Nuitka
+name: Build xonsh bin on Nuitka
 
 on:
   release:
