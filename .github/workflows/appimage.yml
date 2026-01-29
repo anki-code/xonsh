@@ -30,11 +30,15 @@ jobs:
       - name: Install mamba
         run: |
           yes | bash -c "$(curl -L https://micro.mamba.pm/install.sh)"
-          /root/.local/bin/micromamba info
+          /home/runner/.local/bin/micromamba info
 
-      - name: build xonsh AppImage
+      - name: Activate mamba and install packages
         run: |
-          python -m python_appimage build app -p 3.11 ./appimage
+          eval "$(/home/runner/.local/bin/micromamba shell hook -s bash)" \
+             && micromamba activate base \
+             && micromamba install -y -c conda-forge libpython-static==3.11 gcc ccache \
+             && pip install -U pip setuptools wheel certifi \
+             && pip install . ujson pygments prompt_toolkit pyperclip xontrib-sh xontrib-prompt-starship
 
       - name: Get latest release upload URL
         id: get_release
