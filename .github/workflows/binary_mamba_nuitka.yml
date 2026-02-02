@@ -91,6 +91,8 @@ jobs:
         run: |
           ls -lah xonsh.bin
           ./xonsh.bin --version
+          ./xonsh.bin -c '2+2'
+          ./xonsh.bin -c 'print(@.imp.json("{}"))'
           mv xonsh.bin xonsh-mamba.bin
 
       - name: Get latest release upload URL
