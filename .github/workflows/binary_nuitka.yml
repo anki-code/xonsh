@@ -70,7 +70,6 @@ jobs:
                   --include-module=pyperclip \
                   --include-module=ctypes \
                   --include-package=ctypes \
-                  --nofollow-import-to=xonsh.platform \
                   /opt/hostedtoolcache/Python/3.11.14/x64/lib/python$PYTHON_VER/site-packages/xonsh
 
       - name: nuitka-crash-report.xml
