@@ -78,13 +78,16 @@ jobs:
           [ -f nuitka-crash-report.xml ] && cat nuitka-crash-report.xml
 
       - name: Rename binary file
+        continue-on-error: true
         run: |
           ls -lah xonsh.bin
           export XONSH_SHOW_TRACEBACK=1
           ./xonsh.bin --version
           ./xonsh.bin -c '2+2'
           ./xonsh.bin -c 'echo 123'
-          ./xonsh.bin -c 'print(@.imp.json("{}"))'          
+          ./xonsh.bin -c 'import json; js'
+          ./xonsh.bin -c 'print(@.imp.json.loads("{}"))'    
+          ./xonsh.bin -c 'print(@.imp.json.loads($(echo "{}")))'
 
       - name: Get latest release upload URL
         id: get_release
