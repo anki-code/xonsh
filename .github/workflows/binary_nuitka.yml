@@ -85,7 +85,7 @@ jobs:
           ./xonsh.bin --version
           ./xonsh.bin -c '2+2'
           ./xonsh.bin -c 'echo 123'
-          ./xonsh.bin -c 'import json; js'
+          ./xonsh.bin -c 'import json; json.loads("{}")'
           ./xonsh.bin -c 'print(@.imp.json.loads("{}"))'    
           ./xonsh.bin -c 'print(@.imp.json.loads($(echo "{}")))'
 
