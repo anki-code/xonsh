@@ -80,7 +80,6 @@ jobs:
                   --include-module=pyperclip \
                   --include-module=ctypes \
                   --include-package=ctypes \
-                  --nofollow-import-to=xonsh.platform \
                   /home/runner/micromamba/lib/python$PYTHON_VER/site-packages/xonsh
 
       - name: nuitka-crash-report.xml
@@ -91,7 +90,11 @@ jobs:
       - name: Rename binary file
         run: |
           ls -lah xonsh.bin
+          export XONSH_SHOW_TRACEBACK=1
           ./xonsh.bin --version
+          ./xonsh.bin -c '2+2'
+          ./xonsh.bin -c 'echo 123'
+          ./xonsh.bin -c 'print(@.imp.json("{}"))'
           mv xonsh.bin xonsh-mamba.bin
 
       - name: Get latest release upload URL
