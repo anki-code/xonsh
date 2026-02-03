@@ -290,12 +290,14 @@ class Shell:
                 ts=[time.time(), None],
                 locked=True,
                 filename=env.get("XONSH_HISTORY_FILE", None),
+                sessionid=XSH.sessionid,
             )
             env["XONSH_HISTORY_FILE"] = hist.filename
         else:
             XSH.history = hist = DummyHistory()
             env["XONSH_HISTORY_FILE"] = None
 
+        XSH.interface.history = XSH.history
         shell_type = self.choose_shell_type(shell_type, env)
 
         self.shell_type = env["SHELL_TYPE"] = shell_type
