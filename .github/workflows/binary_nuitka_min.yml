@@ -1,4 +1,4 @@
-name: Build xonsh bin on Nuitka
+name: Build xonsh MIN bin on Nuitka
 
 on:
   release:
@@ -60,9 +60,6 @@ jobs:
                   --assume-yes-for-downloads \
                   --jobs=2 \
                   --include-module=ujson \
-                  --include-package=pygments \
-                  --include-package=prompt_toolkit \
-                  --include-module=pyperclip \
                   --include-module=ctypes \
                   --include-package=ctypes \
                   /opt/hostedtoolcache/Python/3.11.14/x64/lib/python$PYTHON_VER/site-packages/xonsh
@@ -83,6 +80,7 @@ jobs:
           ./xonsh.bin -c 'import json; json.loads("{}")'
           ./xonsh.bin -c 'print(@.imp.json.loads("{}"))'    
           ./xonsh.bin -c 'print(@.imp.json.loads($(echo "{}")))'
+          mv xonsh.bin xonsh-min.bin
 
       - name: Get latest release upload URL
         id: get_release
@@ -102,6 +100,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.get_release.outputs.upload_url }}
-          asset_path: ./xonsh.bin
-          asset_name: xonsh.bin
+          asset_path: ./xonsh-min.bin
+          asset_name: xonsh-min.bin
           asset_content_type: application/x-executable
