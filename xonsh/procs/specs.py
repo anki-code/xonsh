@@ -349,7 +349,7 @@ class SubprocSpec:
         universal_newlines=False,
         close_fds=False,
         captured=False,
-        env=None,
+        env=None
     ):
         """
         Parameters
@@ -438,6 +438,7 @@ class SubprocSpec:
         self.decorators = []  # List of DecoratorAlias objects that applied to spec.
         self.output_format = XSH.env.get("XONSH_SUBPROC_OUTPUT_FORMAT", "stream_lines")
         self.raise_subproc_error = None  # Spec-based $RAISE_SUBPROC_ERROR.
+        self.pipeline_ctx = {}
 
     def __str__(self):
         s = self.__class__.__name__ + "(" + str(self.cmd) + ", "

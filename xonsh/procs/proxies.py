@@ -476,6 +476,7 @@ class ProcProxyThread(threading.Thread):
                         "stderr": sp_stderr,
                         "spec": spec,
                         "stack": spec.stack,
+                        "ctx": spec.pipeline_ctx
                     },
                 )
         except SystemExit as e:

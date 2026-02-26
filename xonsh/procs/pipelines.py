@@ -158,6 +158,10 @@ class CommandPipeline:
         self.term_pgid = None
         self.suspended = None
         self.output_format = self.spec.output_format
+        self.pipeline_ctx = {}
+
+        for spec in self.specs:
+            spec.pipeline_ctx = self.pipeline_ctx
 
         background = self.spec.background
         pipeline_group = None

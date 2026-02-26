@@ -95,6 +95,7 @@ class FuncAlias:
         spec=None,
         stack=None,
         decorators=None,
+        ctx=None,
     ):
         return run_alias_by_params(
             self.func,
@@ -106,6 +107,7 @@ class FuncAlias:
                 "spec": spec,
                 "stack": stack,
                 "decorators": decorators,
+                "ctx": ctx,
             },
         )
 
@@ -492,6 +494,21 @@ class PartialEvalAlias7(PartialEvalAliasBase):
         args = list(self.acc_args) + args
         return self.f(args, stdin, stdout, stderr, spec, stack, decorators)
 
+class PartialEvalAlias8(PartialEvalAliasBase):
+    def __call__(
+        self,
+        args,
+        stdin=None,
+        stdout=None,
+        stderr=None,
+        spec=None,
+        stack=None,
+        decorators=None,
+        ctx=None
+    ):
+        args = list(self.acc_args) + args
+        return self.f(args, stdin, stdout, stderr, spec, stack, decorators, ctx)
+
 
 PARTIAL_EVAL_ALIASES = (
     PartialEvalAlias0,
@@ -502,6 +519,7 @@ PARTIAL_EVAL_ALIASES = (
     PartialEvalAlias5,
     PartialEvalAlias6,
     PartialEvalAlias7,
+    PartialEvalAlias8,
 )
 
 
