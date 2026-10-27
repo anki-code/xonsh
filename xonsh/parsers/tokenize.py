@@ -1237,6 +1237,19 @@ def _tokenize(
                             continue
                         else:
                             if tolerant:
+                                # Drop the unterminated f-string like the
+                                # end-of-line branch below does; a bare break
+                                # re-enters this scanner at the same newline
+                                # forever.
+                                if text:
+                                    yield TokenInfo(
+                                        FSTRING_MIDDLE,
+                                        text,
+                                        (lnum, text_start),
+                                        (lnum, pos),
+                                        line,
+                                    )
+                                fstring_stack.pop()
                                 break
                             raise TokenError(
                                 "EOL while scanning f-string",
